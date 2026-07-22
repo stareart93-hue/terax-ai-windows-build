@@ -68,7 +68,7 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build NSIS installer
-        run: pnpm exec tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm exec tauri build --bundles nsis
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
