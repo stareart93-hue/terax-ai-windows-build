@@ -67,8 +67,19 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      - name: Write CI Tauri config
+        shell: pwsh
+        run: |
+          @'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          '@ | Set-Content -Encoding UTF8 src-tauri/tauri.ci.conf.json
+
       - name: Build NSIS installer
-        run: pnpm exec tauri build --bundles nsis
+        run: pnpm exec tauri build --bundles nsis --config src-tauri/tauri.ci.conf.json
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
