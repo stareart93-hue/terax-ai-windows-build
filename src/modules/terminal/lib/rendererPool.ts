@@ -264,9 +264,14 @@ function createSlot(): Slot {
       return false;
     }
     if (isTerminalCopy(event)) {
-      if (event.type === "keydown" && slot.term.hasSelection()) {
-        const sel = slot.term.getSelection();
-        if (sel) void writeTerminalClipboard(sel);
+      if (!slot.term.hasSelection()) {
+        if (!event.shiftKey) return true;
+        event.preventDefault();
+        return false;
+      }
+      if (event.type === "keydown") {
+        const selection = slot.term.getSelection();
+        if (selection) void writeTerminalClipboard(selection);
       }
       event.preventDefault();
       return false;
@@ -1028,12 +1033,13 @@ export function getLiveSlotForLeaf(leafId: number): Slot | null {
 const IS_MAC =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad/.test(navigator.userAgent);
+const IS_WINDOWS =
+  typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
 
 function isTerminalCopy(e: KeyboardEvent): boolean {
   return (
-    !IS_MAC &&
+    IS_WINDOWS &&
     e.ctrlKey &&
-    e.shiftKey &&
     !e.altKey &&
     !e.metaKey &&
     (e.code === "KeyC" || e.key === "c" || e.key === "C")

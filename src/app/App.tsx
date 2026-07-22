@@ -6,6 +6,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { consumeLaunchFiles, getLaunchDir } from "@/lib/launchDir";
+import { IS_WINDOWS } from "@/lib/platform";
 import { quoteShellArg } from "@/lib/shellQuote";
 import { usePresence } from "@/lib/usePresence";
 import { useZoom } from "@/lib/useZoom";
@@ -61,7 +62,7 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import {
-  SpaceSwitcher,
+  SpaceSidebar,
   useSpacePersistence,
   useSpaces,
   useSpacesBoot,
@@ -111,8 +112,6 @@ export default function App() {
     setActiveId,
     allocId,
     replaceTabs,
-    moveTabToSpace,
-    reorderTab,
     reorderTabByGap,
     newTabInSpace,
     removeTabsForSpace,
@@ -259,8 +258,6 @@ export default function App() {
     setActiveId,
     adoptWorkspaceEnv,
   ]);
-
-  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const spaceTabs = useMemo(
     () => tabs.filter((t) => t.spaceId === (activeSpaceId ?? DEFAULT_SPACE_ID)),
@@ -694,6 +691,15 @@ export default function App() {
     [setActiveId, focusPane],
   );
 
+  const focusSpacesPanel = useCallback(() => {
+    const active =
+      document.querySelector<HTMLElement>(
+        '[data-space-sidebar] button[aria-current="true"]',
+      ) ??
+      document.querySelector<HTMLElement>("[data-space-sidebar] button");
+    active?.focus();
+  }, []);
+
   const shortcutHandlers = useMemo<ShortcutHandlers>(
     () => ({
       "commandPalette.open": () => openCommandPalette("commands"),
@@ -713,7 +719,7 @@ export default function App() {
         ),
       "space.next": () => cycleSpace(1),
       "space.prev": () => cycleSpace(-1),
-      "space.overview": () => setSwitcherOpen(true),
+      "space.overview": () => focusSpacesPanel(),
       "pane.splitRight": () => splitActivePaneInActiveTab("row"),
       "pane.splitDown": () => splitActivePaneInActiveTab("col"),
       "pane.focusNext": () => focusNextPaneInTab(activeId, 1),
@@ -788,6 +794,7 @@ export default function App() {
       zoomOut,
       zoomReset,
       activateAgentTarget,
+      focusSpacesPanel,
     ],
   );
 
@@ -822,6 +829,18 @@ export default function App() {
         const target =
           (e.target as HTMLElement | null) ?? document.activeElement;
         return !(target as HTMLElement | null)?.closest?.(".xterm");
+      }
+      if (id === "tab.close") {
+        // On Windows Ctrl+W is also a terminal control key. Claude Code uses it
+        // for its own worktree/history UI, so focused terminals must receive it
+        // instead of the app closing the tab.
+        if (!IS_WINDOWS) return false;
+        const target =
+          (e.target as HTMLElement | null) ?? document.activeElement;
+        const inTerminal = !!(target as HTMLElement | null)?.closest?.(
+          ".xterm",
+        );
+        return inTerminal && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
       }
       if (
         id === "terminal.toggleInput" ||
@@ -998,25 +1017,6 @@ export default function App() {
     [removeTabsForSpace],
   );
 
-  const handleMoveTab = useCallback(
-    (tabId: number, targetSpaceId: string) => {
-      if (moveTabToSpace(tabId, targetSpaceId)) {
-        useSpaces.getState().setActive(targetSpaceId);
-      }
-    },
-    [moveTabToSpace],
-  );
-
-  const handleReorderTab = useCallback(
-    (tabId: number, targetTabId: number, edge: "top" | "bottom") => {
-      if (reorderTab(tabId, targetTabId, edge)) {
-        const target = tabsRef.current.find((x) => x.id === targetTabId);
-        if (target) useSpaces.getState().setActive(target.spaceId);
-      }
-    },
-    [reorderTab],
-  );
-
   const handleNewTabInSpace = useCallback(
     (spaceId: string) => {
       const root = useSpaces
@@ -1033,25 +1033,8 @@ export default function App() {
       if (!t) return;
       setActiveId(tabId);
       useSpaces.getState().setActive(t.spaceId);
-      setSwitcherOpen(false);
     },
     [setActiveId],
-  );
-
-  const spaceSwitcher = (
-    <SpaceSwitcher
-      open={switcherOpen}
-      onOpenChange={setSwitcherOpen}
-      tabs={tabs}
-      onNewSpace={() => void handleNewSpace()}
-      onDeleteSpace={handleDeleteSpace}
-      onNewTabInSpace={handleNewTabInSpace}
-      onJumpTab={jumpToTab}
-      onCloseTab={handleClose}
-      onMoveTabToSpace={handleMoveTab}
-      onReorderTab={handleReorderTab}
-      onReorderSpaces={(ids) => useSpaces.getState().reorder(ids)}
-    />
   );
 
   const commandPaletteItems = useMemo(
@@ -1082,7 +1065,7 @@ export default function App() {
             openKeyboardShortcuts: () => void openSettingsWindow("shortcuts"),
             spaces: useSpaces.getState().spaces,
             activeSpaceId,
-            openSpacesOverview: () => setSwitcherOpen(true),
+            openSpacesOverview: focusSpacesPanel,
             newSpace: () => void handleNewSpace(),
             switchSpace: (id) => useSpaces.getState().setActive(id),
           })
@@ -1107,6 +1090,7 @@ export default function App() {
       askFromSelection,
       activeSpaceId,
       handleNewSpace,
+      focusSpacesPanel,
     ],
   );
 
@@ -1174,7 +1158,6 @@ export default function App() {
               onActivateAgent={onActivateAgent}
               onActivateLocalAgent={onActivateLocalAgent}
               onOpenSettings={() => void openSettingsWindow()}
-              spaceSwitcher={spaceSwitcher}
               searchTarget={searchTarget}
               searchRef={searchInlineRef}
               onOverrideLanguage={setOverrideLanguage}
@@ -1187,61 +1170,23 @@ export default function App() {
               className="min-h-0 flex-1"
             >
               <ResizablePanel
-                id="sidebar"
-                panelRef={sidebarRef}
-                defaultSize={
-                  initialSidebarCollapsed
-                    ? "0px"
-                    : `${sidebarWidthRef.current}px`
-                }
-                minSize={`${SIDEBAR_MIN_WIDTH}px`}
-                maxSize={`${SIDEBAR_MAX_WIDTH}px`}
-                collapsible
-                collapsedSize={0}
-                onResize={(size) => {
-                  if (size.inPixels > 0) persistSidebarWidth(size.inPixels);
-                  persistSidebarCollapsed(size.inPixels <= 0);
-                }}
+                id="spaces"
+                defaultSize="240px"
+                minSize="180px"
+                maxSize="340px"
               >
-                <div className="flex h-full min-h-0 flex-col border-r border-border/60 bg-card">
-                  <div
-                    key={sidebarView}
-                    className="min-h-0 flex-1 terax-panel-in"
-                  >
-                    {sidebarView === "explorer" ? (
-                      <FileExplorer
-                        ref={explorerRef}
-                        rootPath={explorerRoot}
-                        gitStatus={
-                          explorerGitDecorations ? sourceControl.status : null
-                        }
-                        activeFilePath={explorerActiveFilePath}
-                        onOpenFile={handleOpenFile}
-                        onPathRenamed={handlePathRenamed}
-                        onPathDeleted={handlePathDeleted}
-                        onRevealInTerminal={cdInNewTab}
-                        onAttachToAgent={handleAttachFileToAgent}
-                      />
-                    ) : (
-                      <SourceControlPanel
-                        open
-                        sourceControl={sourceControl}
-                        onOpenDiff={openGitDiffTab}
-                        onOpenGitGraph={openGitGraphFromContext}
-                        onOpenFile={handleOpenFile}
-                        onNavigateToPath={cdInNewTab}
-                      />
-                    )}
-                  </div>
-                  <SidebarRail
-                    activeView={sidebarView}
-                    onSelectView={persistSidebarView}
-                    changedCount={sourceControl.changedCount}
-                  />
-                </div>
+                <SpaceSidebar
+                  tabs={tabs}
+                  activeTabId={activeId}
+                  onNewSpace={() => void handleNewSpace()}
+                  onDeleteSpace={handleDeleteSpace}
+                  onNewTabInSpace={handleNewTabInSpace}
+                  onJumpTab={jumpToTab}
+                  onCloseTab={handleClose}
+                />
               </ResizablePanel>
               <ResizableHandle withHandle />
-              <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
+              <ResizablePanel id="workspace" defaultSize="70%" minSize="30%">
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="relative min-h-0 flex-1">
                     <WorkspaceSurface
@@ -1276,6 +1221,61 @@ export default function App() {
                     panelOpen={panelOpen}
                     keysLoaded={keysLoaded}
                     onConnect={() => void openSettingsWindow("models")}
+                  />
+                </div>
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                id="sidebar"
+                panelRef={sidebarRef}
+                defaultSize={
+                  initialSidebarCollapsed
+                    ? "0px"
+                    : `${sidebarWidthRef.current}px`
+                }
+                minSize={`${SIDEBAR_MIN_WIDTH}px`}
+                maxSize={`${SIDEBAR_MAX_WIDTH}px`}
+                collapsible
+                collapsedSize={0}
+                onResize={(size) => {
+                  if (size.inPixels > 0) persistSidebarWidth(size.inPixels);
+                  persistSidebarCollapsed(size.inPixels <= 0);
+                }}
+              >
+                <div className="flex h-full min-h-0 flex-col border-l border-border/60 bg-card">
+                  <div
+                    key={sidebarView}
+                    className="min-h-0 flex-1 terax-panel-in"
+                  >
+                    {sidebarView === "explorer" ? (
+                      <FileExplorer
+                        ref={explorerRef}
+                        rootPath={explorerRoot}
+                        gitStatus={
+                          explorerGitDecorations ? sourceControl.status : null
+                        }
+                        activeFilePath={explorerActiveFilePath}
+                        onOpenFile={handleOpenFile}
+                        onPathRenamed={handlePathRenamed}
+                        onPathDeleted={handlePathDeleted}
+                        onRevealInTerminal={cdInNewTab}
+                        onAttachToAgent={handleAttachFileToAgent}
+                      />
+                    ) : (
+                      <SourceControlPanel
+                        open
+                        sourceControl={sourceControl}
+                        onOpenDiff={openGitDiffTab}
+                        onOpenGitGraph={openGitGraphFromContext}
+                        onOpenFile={handleOpenFile}
+                        onNavigateToPath={cdInNewTab}
+                      />
+                    )}
+                  </div>
+                  <SidebarRail
+                    activeView={sidebarView}
+                    onSelectView={persistSidebarView}
+                    changedCount={sourceControl.changedCount}
                   />
                 </div>
               </ResizablePanel>
