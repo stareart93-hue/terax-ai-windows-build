@@ -10,6 +10,7 @@ import {
   type ProviderId,
 } from "../config";
 import { useTodosStore } from "./todoStore";
+import { useApprovalPolicyStore } from "./approvalPolicy";
 import type { AgentUsage } from "../lib/agent";
 import { EMPTY_PROVIDER_KEYS, type ProviderKeys, type CustomEndpointKeys } from "../lib/keyring";
 import {
@@ -339,6 +340,8 @@ export const useChatStore = create<StoreState>((set, get) => ({
     // Lazily seed the chat with persisted messages the first time we open
     // this session. Subsequent switches reuse the cached Chat instance.
     const flip = () => {
+      // Session-scoped approval trust does not carry across sessions.
+      useApprovalPolicyStore.getState().reset();
       set({ activeSessionId: id, agentMeta: IDLE_META });
       void saveActiveId(id);
     };

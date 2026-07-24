@@ -10,6 +10,10 @@ import {
   type AgentRunStatus,
 } from "../store/chatStore";
 import { getOrCreateChat } from "../store/chatRuntime";
+import {
+  approvalPolicyState,
+  isAutoApproved,
+} from "../store/approvalPolicy";
 
 /**
  * Headless bridge that mirrors chat lifecycle into the store, so the status
@@ -123,6 +127,38 @@ function Bridge({
   useEffect(() => {
     if (approvalsPending > 0) openMini();
   }, [approvalsPending, openMini]);
+
+  // ---- Session-scoped approval auto-approve --------------------------------
+  // If the user has granted an allow rule / budget for a tool kind (via the
+  // approval card's "allow this session" / "approve remaining N"), resolve the
+  // approval here without ever showing the card. The security layer inside each
+  // tool's execute still runs — this only suppresses the UI prompt.
+  const autoHandledRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    autoHandledRef.current = new Set();
+  }, [sessionId]);
+  useEffect(() => {
+    if (approvalsPending === 0) return;
+    const policy = approvalPolicyState();
+    const cwd = useChatStore.getState().live.getCwd();
+    for (const m of messages) {
+      if (m.role !== "assistant") continue;
+      for (const p of m.parts as AnyPart[]) {
+        const state = (p as { state?: string }).state;
+        if (state !== "approval-requested") continue;
+        const id = (p as { approval?: { id?: string } }).approval?.id;
+        if (!id) continue;
+        if (autoHandledRef.current.has(id)) continue;
+        const info = extractApprovalTarget(p);
+        if (!info) continue;
+        const path = info.path ? resolvePathSafe(info.path, cwd) : undefined;
+        if (!isAutoApproved(policy, info.toolName, path)) continue;
+        autoHandledRef.current.add(id);
+        policy.dec(info.toolName);
+        void addToolApprovalResponse({ id, approved: true });
+      }
+    }
+  }, [messages, approvalsPending, addToolApprovalResponse]);
 
   // ---- AI diff tab management ----------------------------------------------
   // We track which approvalIds have already opened a tab so re-renders don't
@@ -322,6 +358,27 @@ function extractFileMutation(part: AnyPart): FileMutation | null {
     return { state, approvalId, path, derive: { kind: "edits", edits } };
   }
   return null;
+}
+
+/** Extract (toolName, path) from any approval-requested tool part. */
+function extractApprovalTarget(
+  part: AnyPart,
+): { toolName: string; path?: string } | null {
+  const type = (part as { type?: string }).type ?? "";
+  if (!type.startsWith("tool-")) return null;
+  const toolName = type.slice("tool-".length);
+  const input = (part as ToolPartLike).input as { path?: unknown } | undefined;
+  const path =
+    input && typeof input.path === "string" ? input.path : undefined;
+  return { toolName, path };
+}
+
+function resolvePathSafe(path: string, cwd: string | null): string | undefined {
+  try {
+    return resolvePath(path, cwd);
+  } catch {
+    return path;
+  }
 }
 
 function applyEditsLocally(

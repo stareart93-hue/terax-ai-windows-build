@@ -952,6 +952,94 @@ pub fn pull_ff_only(
     ensure_success(&output, "git pull --ff-only failed")
 }
 
+/// Pull with rebase. Used when the branch has diverged (ahead>0 && behind>0),
+/// where a fast-forward pull is impossible. May leave the repo in a
+/// rebase-in-progress state with conflict markers if the rebase hits conflicts;
+/// the caller surfaces those via the normal status (U/UU entries) and can offer
+/// `resolve_conflict` / `rebase_abort`.
+pub fn pull_rebase(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["pull", "--rebase"],
+        NETWORK_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git pull --rebase failed")
+}
+
+/// Abort an in-progress rebase (e.g. after a conflicting `pull --rebase` that
+/// the user wants to back out of). No-op (git exits non-zero with a clear
+/// message) if no rebase is in progress.
+pub fn rebase_abort(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["rebase", "--abort"],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git rebase --abort failed")
+}
+
+/// Resolve a merge/rebase conflict on a single path by taking one side
+/// wholesale, then stage it. `side` is "ours" or "theirs". After this the file
+/// is no longer marked Unmerged.
+pub fn resolve_conflict(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    path: &str,
+    side: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let normalized = match side {
+        "ours" => "--ours",
+        "theirs" => "--theirs",
+        other => {
+            return Err(GitError::InvalidInput(format!(
+                "side must be \"ours\" or \"theirs\", got {other:?}"
+            )));
+        }
+    };
+    let pathspec = pathspec_from_input(&repo_root.local_path, path)?;
+    // `checkout --ours/--theirs` only works during a conflict; restore the
+    // working-tree file to the chosen stage version, then add to mark resolved.
+    let checkout_args: Vec<OsString> = vec![
+        "checkout".into(),
+        normalized.into(),
+        "--".into(),
+        pathspec.clone().into(),
+    ];
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        checkout_args,
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git checkout --ours/--theirs failed")?;
+
+    let add_args: Vec<OsString> = vec!["add".into(), "--".into(), pathspec.into()];
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        add_args,
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git add failed")
+}
+
 fn nothing_to_commit(output: &GitOutput) -> bool {
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
     let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();

@@ -22,6 +22,7 @@ pub enum GitError {
     HostKeyUnverified,
     TimedOut(&'static str),
     EmptyCommitMessage,
+    InvalidInput(String),
     CommandFailed {
         context: &'static str,
         detail: String,
@@ -79,6 +80,7 @@ impl Display for GitError {
             ),
             GitError::TimedOut(op) => write!(f, "{op} timed out"),
             GitError::EmptyCommitMessage => write!(f, "commit message cannot be empty"),
+            GitError::InvalidInput(detail) => write!(f, "invalid input: {detail}"),
             GitError::CommandFailed { context, detail } => {
                 if detail.is_empty() {
                     write!(f, "{context}")

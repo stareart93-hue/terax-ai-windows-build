@@ -1,46 +1,27 @@
-import {
-  Context,
-  ContextContent,
-  ContextContentBody,
-  ContextContentFooter,
-  ContextContentHeader,
-  ContextTrigger,
-} from "@/components/ai-elements/context";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
-  Add01Icon,
   AlertCircleIcon,
-  ArrowDown01Icon,
   Cancel01Icon,
-  Delete02Icon,
   FilterIcon,
   TerminalIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { PresenceState } from "@/lib/usePresence";
 import { useEffect, useMemo } from "react";
-import { estimateCost, getModel, getModelContextLimit, type ModelId } from "../config";
 import type { ResizeDir } from "../lib/miniWindowGeometry";
-import type { SessionMeta } from "../lib/sessions";
 import { useMiniWindowGeometry } from "../lib/useMiniWindowGeometry";
 import { useAgentsStore } from "../store/agentsStore";
 import { useChatStore } from "../store/chatStore";
 import { getOrCreateChat } from "../store/chatRuntime";
-import { usePreferencesStore } from "@/modules/settings/preferences";
 import { usePlanStore } from "../store/planStore";
 import { AgentSwitcher } from "./AgentSwitcher";
 import { AiChatView } from "./AiChat";
+import { ContextIndicator } from "./ContextIndicator";
 import { PlanDiffReview } from "./PlanDiffReview";
+import { SessionPicker } from "./SessionPicker";
 import { TodoStrip } from "./TodoStrip";
 
 const SUGGESTIONS = [
@@ -310,230 +291,6 @@ function Header({
         </Button>
       </div>
     </div>
-  );
-}
-
-function estimateTokens(messages: UIMessage[]): number {
-  let chars = 0;
-  for (const m of messages) {
-    for (const p of m.parts) {
-      if (p.type === "text") {
-        chars += (p as { text?: string }).text?.length ?? 0;
-      } else if (p.type === "reasoning") {
-        chars += (p as { text?: string }).text?.length ?? 0;
-      } else if (typeof p.type === "string" && p.type.startsWith("tool-")) {
-        const tp = p as unknown as { input?: unknown; output?: unknown };
-        if (tp.input) chars += JSON.stringify(tp.input).length;
-        if (tp.output) chars += JSON.stringify(tp.output).length;
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
-function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
-}
-
-function ContextIndicator({ messages }: { messages: UIMessage[] }) {
-  const modelId = useChatStore((s) => s.selectedModelId);
-  const tokens = useChatStore((s) => s.agentMeta.tokens);
-  const lastInput = useChatStore((s) => s.agentMeta.lastInputTokens);
-  const lastCached = useChatStore((s) => s.agentMeta.lastCachedTokens);
-  const estimated = useMemo(() => estimateTokens(messages), [messages]);
-  const used = lastInput > 0 ? lastInput : estimated;
-  const reported = tokens.inputTokens + tokens.outputTokens;
-  const openaiCompatibleContextLimit = usePreferencesStore(
-    (s) => s.openaiCompatibleContextLimit,
-  );
-  const max = getModelContextLimit(modelId, openaiCompatibleContextLimit);
-  const modelLabel = useMemo(() => {
-    try {
-      return getModel(modelId as ModelId).label;
-    } catch {
-      return modelId;
-    }
-  }, [modelId]);
-  const cost = estimateCost(modelId, tokens);
-  const cacheRate =
-    tokens.inputTokens > 0
-      ? Math.round((tokens.cachedInputTokens / tokens.inputTokens) * 100)
-      : 0;
-
-  return (
-    <Context usedTokens={used} maxTokens={max}>
-      <ContextTrigger className="h-6 gap-1 px-0 text-[10.5px]" />
-      <ContextContent className="w-64 text-[11px]">
-        <ContextContentHeader />
-        <ContextContentBody>
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span>Model</span>
-            <span className="font-mono text-foreground">{modelLabel}</span>
-          </div>
-          <div className="mt-1 flex items-center justify-between text-muted-foreground">
-            <span>{lastInput > 0 ? "Last request" : "Estimated context"}</span>
-            <span className="font-mono text-foreground">
-              {formatTokens(used)}
-            </span>
-          </div>
-          {lastCached > 0 && (
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>Of which cached</span>
-              <span className="font-mono text-foreground">
-                {formatTokens(lastCached)}
-              </span>
-            </div>
-          )}
-          {reported > 0 && (
-            <>
-              <div className="mt-1.5 flex items-center justify-between text-muted-foreground">
-                <span>Session input</span>
-                <span className="font-mono text-foreground">
-                  {formatTokens(tokens.inputTokens)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>Session output</span>
-                <span className="font-mono text-foreground">
-                  {formatTokens(tokens.outputTokens)}
-                </span>
-              </div>
-              {tokens.cachedInputTokens > 0 && (
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span>Cache hit</span>
-                  <span className="font-mono text-foreground">{cacheRate}%</span>
-                </div>
-              )}
-              {cost != null && (
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span>Session cost</span>
-                  <span className="font-mono text-foreground">
-                    ${cost.toFixed(cost < 0.01 ? 4 : cost < 1 ? 3 : 2)}
-                  </span>
-                </div>
-              )}
-            </>
-          )}
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span>Window</span>
-            <span className="font-mono text-foreground">
-              {formatTokens(max)}
-            </span>
-          </div>
-        </ContextContentBody>
-        <ContextContentFooter>
-          <span className="text-[10px] italic text-muted-foreground">
-            {lastInput > 0
-              ? "Last request reflects current context size; session totals are cumulative."
-              : "Token count is approximate (chars / 4)."}
-          </span>
-        </ContextContentFooter>
-      </ContextContent>
-    </Context>
-  );
-}
-
-function SessionPicker() {
-  const sessions = useChatStore((s) => s.sessions);
-  const activeId = useChatStore((s) => s.activeSessionId);
-  const switchSession = useChatStore((s) => s.switchSession);
-  const newSession = useChatStore((s) => s.newSession);
-  const deleteSession = useChatStore((s) => s.deleteSession);
-
-  const active = sessions.find((s) => s.id === activeId) ?? null;
-  if (!active) return null;
-
-  const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "flex min-w-0 max-w-48 items-center gap-1 rounded-md px-1.5 py-1",
-            "text-[11px] text-muted-foreground transition-colors",
-            "hover:bg-accent hover:text-foreground",
-          )}
-          title="Switch session"
-        >
-          <span className="truncate">{active.title || "New chat"}</span>
-          <HugeiconsIcon
-            icon={ArrowDown01Icon}
-            size={10}
-            strokeWidth={2}
-            className="opacity-70"
-          />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-56">
-        <DropdownMenuItem
-          onSelect={() => newSession()}
-          className="gap-2 text-xs"
-        >
-          <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={1.75} />
-          New session
-        </DropdownMenuItem>
-        {sorted.length > 0 ? <DropdownMenuSeparator /> : null}
-        {sorted.map((s) => (
-          <SessionRow
-            key={s.id}
-            session={s}
-            active={s.id === activeId}
-            onSelect={() => switchSession(s.id)}
-            onDelete={() => deleteSession(s.id)}
-          />
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function SessionRow({
-  session,
-  active,
-  onSelect,
-  onDelete,
-}: {
-  session: SessionMeta;
-  active: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <DropdownMenuItem
-      onSelect={(e) => {
-        // Don't dismiss if user clicked the trash icon — handle below.
-        const target = e.target as HTMLElement | null;
-        if (target?.closest("[data-session-delete]")) {
-          e.preventDefault();
-          return;
-        }
-        onSelect();
-      }}
-      className={cn(
-        "group flex items-center justify-between gap-2 text-xs",
-        active && "bg-accent/40",
-      )}
-    >
-      <span className="min-w-0 flex-1 truncate">
-        {session.title || "New chat"}
-      </span>
-      <button
-        type="button"
-        data-session-delete
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        title="Delete session"
-        className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-      >
-        <HugeiconsIcon icon={Delete02Icon} size={11} strokeWidth={1.75} />
-      </button>
-    </DropdownMenuItem>
   );
 }
 

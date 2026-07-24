@@ -4,6 +4,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { consumeLaunchFiles, getLaunchDir } from "@/lib/launchDir";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -69,6 +70,7 @@ import {
 } from "@/modules/spaces";
 import { StatusBar } from "@/modules/statusbar";
 import {
+  type AiDiffTab,
   TabSwitcherHud,
   useTabSwitcher,
   useTabs,
@@ -298,6 +300,38 @@ export default function App() {
   const panelOpen = useChatStore((s) => s.panelOpen);
   const setLive = useChatStore((s) => s.setLive);
   const respondToApproval = useChatStore((s) => s.respondToApproval);
+
+  /**
+   * AI diff accept. When the user kept every hunk, the synthesized content
+   * equals the proposed content, so we simply approve and let the tool write.
+   * When some hunks were reverted (partial rejection), we write the
+   * synthesized content ourselves and deny the tool call — the model is told
+   * its edit was not applied, which is the correct signal, and the user's
+   * partial choice lands on disk.
+   */
+  const handleAiDiffAccept = useCallback(
+    async (approvalId: string, finalContent: string) => {
+      const tab = tabsRef.current.find(
+        (t): t is AiDiffTab =>
+          t.kind === "ai-diff" && t.approvalId === approvalId,
+      );
+      const proposed = tab?.proposedContent ?? "";
+      if (finalContent !== proposed) {
+        if (tab) {
+          try {
+            await native.writeFile(tab.path, finalContent);
+            toast.success("Applied partial edit to disk");
+          } catch (e) {
+            toast.error(`Failed to write: ${String(e)}`);
+          }
+        }
+        respondToApproval(approvalId, false);
+        return;
+      }
+      respondToApproval(approvalId, true);
+    },
+    [respondToApproval],
+  );
 
   const { hasComposer, keysLoaded } = useAiBootstrap();
 
@@ -1203,7 +1237,7 @@ export default function App() {
                       onEditorCloseTab={disposeTab}
                       registerPreviewHandle={registerPreviewHandle}
                       onPreviewUrlChange={handlePreviewUrl}
-                      onAiDiffAccept={(id) => respondToApproval(id, true)}
+                      onAiDiffAccept={handleAiDiffAccept}
                       onAiDiffReject={(id) => respondToApproval(id, false)}
                       onOpenCommitFile={openCommitFileDiffTab}
                       onGitHistorySearchHandle={setGitHistoryHandle}

@@ -564,3 +564,136 @@ fn list_branches_keeps_current_branch_local_and_surfaces_worktrees() {
     assert!(!feature[0].is_head);
     assert!(feature[0].worktree_path.is_some());
 }
+
+/// Build a repo with a real merge conflict on `file.txt`:
+///   base -> main (ours: "main wins")
+///        \-> topic (theirs: "topic wins")
+///   `git merge topic` fails and leaves file.txt in UU state.
+fn repo_with_conflict(fx: &GitRepoFixture) {
+    fx.write_file("file.txt", "base\n");
+    fx.run_git(&["add", "file.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "base"]);
+
+    fx.run_git(&["checkout", "-q", "-b", "topic"]);
+    fx.write_file("file.txt", "topic wins\n");
+    fx.run_git(&["add", "file.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "topic"]);
+
+    fx.run_git(&["checkout", "-q", "main"]);
+    fx.write_file("file.txt", "main wins\n");
+    fx.run_git(&["add", "file.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "main"]);
+
+    // Merge fails on conflict — ignore the exit status.
+    let _ = std::process::Command::new("git")
+        .args(["merge", "topic"])
+        .current_dir(&fx.repo_path)
+        .output();
+}
+
+#[test]
+fn resolve_conflict_ours_keeps_local_version() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    repo_with_conflict(&fx);
+
+    operations::resolve_conflict(
+        &fx.registry,
+        &fx.repo_str(),
+        "file.txt",
+        "ours",
+        &fx.workspace,
+    )
+    .expect("resolve_conflict ours");
+
+    let content = std::fs::read_to_string(fx.repo_path.join("file.txt")).unwrap();
+    assert_eq!(content, "main wins\n");
+    // No conflict markers remain.
+    assert!(!content.contains("<<<<") && !content.contains(">>>>"));
+
+    // The file must no longer be reported as Unmerged.
+    let snap = operations::status(&fx.registry, &fx.repo_str(), &fx.workspace).unwrap();
+    let still_unmerged = snap
+        .changed_files
+        .iter()
+        .any(|f| f.path == "file.txt" && f.status_label == "Unmerged");
+    assert!(!still_unmerged, "file.txt still reported as unmerged");
+}
+
+#[test]
+fn resolve_conflict_theirs_keeps_incoming_version() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    repo_with_conflict(&fx);
+
+    operations::resolve_conflict(
+        &fx.registry,
+        &fx.repo_str(),
+        "file.txt",
+        "theirs",
+        &fx.workspace,
+    )
+    .expect("resolve_conflict theirs");
+
+    let content = std::fs::read_to_string(fx.repo_path.join("file.txt")).unwrap();
+    assert_eq!(content, "topic wins\n");
+}
+
+#[test]
+fn resolve_conflict_rejects_invalid_side() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("file.txt", "base\n");
+    fx.run_git(&["add", "file.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "base"]);
+
+    match operations::resolve_conflict(
+        &fx.registry,
+        &fx.repo_str(),
+        "file.txt",
+        "everyone",
+        &fx.workspace,
+    ) {
+        Err(GitError::InvalidInput(_)) => {}
+        Err(other) => panic!("expected InvalidInput, got {other}"),
+        Ok(_) => panic!("expected error for invalid side"),
+    }
+}
+
+#[test]
+fn pull_rebase_replays_local_commits_without_conflict() {
+    if skip_if_no_git() {
+        return;
+    }
+    // A non-conflicting divergence: main and a remote branch both advance with
+    // disjoint file changes, so `pull --rebase` succeeds cleanly.
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "base"]);
+    fx.run_git(&["checkout", "-q", "-b", "remote-tip"]);
+    fx.write_file("b.txt", "b\n");
+    fx.run_git(&["add", "b.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "remote add"]);
+    fx.run_git(&["checkout", "-q", "main"]);
+    fx.write_file("c.txt", "c\n");
+    fx.run_git(&["add", "c.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "local add"]);
+    // Point main at remote-tip as its upstream and rebase onto it.
+    fx.run_git(&["fetch", ".", "remote-tip:origin/main"]);
+    fx.run_git(&["branch", "--set-upstream-to=origin/main", "main"]);
+
+    operations::pull_rebase(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("pull_rebase");
+
+    // After rebase, all three files exist (base + remote b + local c replayed).
+    assert!(fx.repo_path.join("b.txt").exists());
+    assert!(fx.repo_path.join("c.txt").exists());
+}
+

@@ -15,6 +15,12 @@ import {
 } from "./lib/extensions";
 import { resolveLanguage, resolveLanguageSync } from "./lib/languageResolver";
 import { useEditorThemeExt } from "./lib/useEditorThemeExt";
+import {
+  computeHunks,
+  hasPartialRejection,
+  synthesizeFinalContent,
+  type HunkStatus,
+} from "./lib/hunkReview";
 
 type Props = {
   path: string;
@@ -22,7 +28,12 @@ type Props = {
   proposedContent: string;
   status: AiDiffStatus;
   isNewFile: boolean;
-  onAccept: () => void;
+  /**
+   * Called with the final content, synthesized from per-hunk decisions: kept
+   * hunks contribute the proposed text, reverted hunks contribute the original.
+   * When every hunk is kept, `finalContent` equals `proposedContent`.
+   */
+  onAccept: (finalContent: string) => void;
   onReject: () => void;
 };
 
@@ -109,9 +120,21 @@ export function AiDiffPane({
       if (!cancelled && res) setLang(res.ext);
     });
     return () => {
-      cancelled = true;
+      cancelled = false;
     };
   }, [path, lang]);
+
+  // Per-hunk review state. One entry per changed chunk; defaults to "pending"
+  // which the synthesizer treats as "keep" (matches the prior whole-file
+  // Accept semantics). Reset whenever the proposed content changes.
+  const hunks = useMemo(
+    () => computeHunks(originalContent, proposedContent),
+    [originalContent, proposedContent],
+  );
+  const [hunkStatus, setHunkStatus] = useState<HunkStatus[]>([]);
+  useEffect(() => {
+    setHunkStatus(hunks.map(() => "pending"));
+  }, [hunks]);
 
   const extensions = useMemo(
     () => [
@@ -136,6 +159,28 @@ export function AiDiffPane({
     () => computeLineStats(originalContent, proposedContent),
     [originalContent, proposedContent],
   );
+
+  const handleAccept = () => {
+    const finalContent = synthesizeFinalContent(
+      originalContent,
+      proposedContent,
+      hunkStatus,
+    );
+    onAccept(finalContent);
+  };
+
+  const toggleHunk = (i: number) => {
+    setHunkStatus((cur) => {
+      const next = [...cur];
+      const prev = next[i] ?? "pending";
+      // Cycle pending -> accepted -> rejected -> accepted.
+      next[i] =
+        prev === "accepted" ? "rejected" : prev === "rejected" ? "accepted" : "accepted";
+      return next;
+    });
+  };
+
+  const anyRejected = hasPartialRejection(hunkStatus);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-md border border-border/60 bg-background">
@@ -172,11 +217,11 @@ export function AiDiffPane({
             <Button
               size="sm"
               variant="default"
-              onClick={onAccept}
+              onClick={handleAccept}
               className="h-7 gap-1.5"
             >
               <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2} />
-              Accept
+              {anyRejected ? "Apply partial" : "Accept"}
             </Button>
             <Button
               size="sm"
@@ -190,6 +235,14 @@ export function AiDiffPane({
           </div>
         ) : null}
       </div>
+
+      {status === "pending" && hunks.length > 1 ? (
+        <HunkStrip
+          hunks={hunks}
+          statuses={hunkStatus}
+          onToggle={toggleHunk}
+        />
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <CodeMirror
@@ -209,6 +262,60 @@ export function AiDiffPane({
           }}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-hunk decision strip. Renders one chip per changed chunk; clicking toggles
+ * keep/revert. This is the review affordance — the unified-merge view itself
+ * stays read-only (its native mergeControls mutate the doc, which a read-only
+ * view rejects).
+ */
+function HunkStrip({
+  hunks,
+  statuses,
+  onToggle,
+}: {
+  hunks: { fromA: number; toA: number; fromB: number; toB: number }[];
+  statuses: HunkStatus[];
+  onToggle: (i: number) => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/60 bg-muted/30 px-3 py-1.5">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        Hunks
+      </span>
+      {hunks.map((h, i) => {
+        const st = statuses[i] ?? "pending";
+        const added = Math.max(0, h.toB - h.fromB);
+        const removed = Math.max(0, h.toA - h.fromA);
+        return (
+          <button
+            key={`hunk-${i}`}
+            type="button"
+            onClick={() => onToggle(i)}
+            title={`Hunk ${i + 1}: +${added} −${removed}. Click to toggle keep/revert.`}
+            className={
+              "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-mono tabular-nums transition-colors " +
+              (st === "rejected"
+                ? "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                : st === "accepted"
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "border-border/60 bg-card text-muted-foreground hover:bg-accent")
+            }
+          >
+            <span>{i + 1}</span>
+            <span className="text-emerald-600 dark:text-emerald-400">
+              +{added}
+            </span>
+            <span className="text-rose-600 dark:text-rose-400">−{removed}</span>
+            <span className="ml-0.5">
+              {st === "rejected" ? "reverted" : st === "accepted" ? "kept" : ""}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

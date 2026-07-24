@@ -10,6 +10,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { fmtShortcut, MOD_KEY } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
+import { Suspense, lazy } from "react";
+import { SessionPicker } from "./SessionPicker";
+
+// ContextIndicatorLive pulls in @ai-sdk/react (the heavy chat runtime); keep it
+// out of the eager graph and load it only when the panel is actually open.
+const ContextIndicatorLive = lazy(() =>
+  import("./ContextIndicator").then((m) => ({ default: m.ContextIndicatorLive })),
+);
 import {
   Add01Icon,
   AiBookIcon,
@@ -155,6 +163,11 @@ export function AiStatusBarControls() {
       )}
 
       <ModelDropdown />
+
+      <Suspense fallback={null}>
+        <ContextIndicatorLive />
+      </Suspense>
+      <SessionPicker />
 
       <span className="mx-1 h-8 w-px bg-border" aria-hidden />
       <Button

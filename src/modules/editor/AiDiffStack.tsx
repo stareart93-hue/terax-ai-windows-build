@@ -4,7 +4,8 @@ import { AiDiffPane } from "./AiDiffPane";
 type Props = {
   tabs: Tab[];
   activeId: number;
-  onAccept: (approvalId: string) => void;
+  /** finalContent is the synthesized content reflecting per-hunk decisions. */
+  onAccept: (approvalId: string, finalContent: string) => void;
   onReject: (approvalId: string) => void;
 };
 
@@ -22,7 +23,7 @@ export function AiDiffStack({ tabs, activeId, onAccept, onReject }: Props) {
         proposedContent={active.proposedContent}
         status={active.status}
         isNewFile={active.isNewFile}
-        onAccept={() => onAccept(active.approvalId)}
+        onAccept={(finalContent) => onAccept(active.approvalId, finalContent)}
         onReject={() => onReject(active.approvalId)}
       />
     </div>

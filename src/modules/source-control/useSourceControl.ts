@@ -14,7 +14,11 @@ const FOCUS_REFRESH_MIN_INTERVAL_MS = 1500;
 const SC_STATUS_TTL_MS = 2000;
 
 export type SourceControlRefreshMode = "auto" | "always" | "never";
-export type SourceControlRemoteAction = "fetch" | "pull" | "push";
+export type SourceControlRemoteAction =
+  | "fetch"
+  | "pull"
+  | "pull-rebase"
+  | "push";
 export type SourceControlRemoteActionMode =
   | "contextual"
   | SourceControlRemoteAction;
@@ -395,6 +399,10 @@ export function useSourceControl(
           await native.gitFetch(repo.repoRoot);
           touchAutoFetch(autoFetchByRepoRef.current, repo.repoRoot);
           await native.gitPullFfOnly(repo.repoRoot);
+        } else if (action === "pull-rebase") {
+          await native.gitFetch(repo.repoRoot);
+          touchAutoFetch(autoFetchByRepoRef.current, repo.repoRoot);
+          await native.gitPullRebase(repo.repoRoot);
         } else {
           await native.gitPush(repo.repoRoot);
         }

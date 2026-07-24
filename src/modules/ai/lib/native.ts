@@ -327,6 +327,23 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
+  gitPullRebase: (repoRoot: string) =>
+    invoke<void>("git_pull_rebase", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitRebaseAbort: (repoRoot: string) =>
+    invoke<void>("git_rebase_abort", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitResolveConflict: (repoRoot: string, path: string, side: "ours" | "theirs") =>
+    invoke<void>("git_resolve_conflict", {
+      repoRoot,
+      path,
+      side,
+      workspace: currentWorkspaceEnv(),
+    }),
   gitPush: (repoRoot: string) =>
     invoke<GitPushResult>("git_push", {
       repoRoot,

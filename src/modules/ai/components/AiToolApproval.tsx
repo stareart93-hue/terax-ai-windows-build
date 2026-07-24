@@ -12,7 +12,8 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ToolUIPart } from "ai";
-import { memo } from "react";
+import { memo, useState } from "react";
+import { useApprovalPolicyStore } from "../store/approvalPolicy";
 
 type Props = {
   part: Extract<ToolUIPart, { state: "approval-requested" }>;
@@ -35,6 +36,21 @@ function AiToolApprovalImpl({ part, toolName, onRespond }: Props) {
   const label = meta?.label ?? toolName;
   const Icon = meta?.icon ?? ToolsIcon;
   const input = part.input as Record<string, unknown>;
+  const allowTool = useApprovalPolicyStore((s) => s.allowTool);
+  // Whether this tool kind is eligible for session-scoped auto-approve. We only
+  // surface it for filesystem mutations — bash commands are per-call risk and
+  // stay explicitly approved every time (the security deny-list still runs
+  // regardless, but we don't want to encourage blanket bash trust).
+  const canAllowSession = ALLOW_SESSION_TOOLS.has(toolName);
+  const [allowSession, setAllowSession] = useState(false);
+
+  const handleApprove = () => {
+    if (canAllowSession && allowSession) {
+      const path = typeof input.path === "string" ? input.path : undefined;
+      allowTool({ toolName, pathPrefix: path });
+    }
+    onRespond(true);
+  };
 
   return (
     <div className="rounded-lg border border-border bg-card shadow-sm">
@@ -71,16 +87,35 @@ function AiToolApprovalImpl({ part, toolName, onRespond }: Props) {
         <Button
           size="sm"
           variant="default"
-          onClick={() => onRespond(true)}
+          onClick={handleApprove}
           className="h-7 gap-1.5 text-[11px]"
         >
           <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2} />
           Approve
         </Button>
       </div>
+      {canAllowSession ? (
+        <label className="flex cursor-pointer select-none items-center gap-1.5 border-t border-border/60 px-3 py-1.5 text-[10.5px] text-muted-foreground hover:bg-accent/30">
+          <input
+            type="checkbox"
+            checked={allowSession}
+            onChange={(e) => setAllowSession(e.target.checked)}
+            className="size-3 accent-foreground"
+          />
+          Allow {label.toLowerCase()} this session
+        </label>
+      ) : null}
     </div>
   );
 }
+
+/** Tool kinds eligible for the "allow this session" checkbox. */
+const ALLOW_SESSION_TOOLS = new Set([
+  "edit",
+  "multi_edit",
+  "write_file",
+  "create_directory",
+]);
 
 export const AiToolApproval = memo(AiToolApprovalImpl, (a, b) => {
   // The approval card never changes content for a given approvalId — once

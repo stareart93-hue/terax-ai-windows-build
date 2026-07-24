@@ -182,6 +182,48 @@ pub async fn git_pull_ff_only(
 }
 
 #[tauri::command]
+pub async fn git_pull_rebase(
+    repo_root: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::pull_rebase(r, &repo_root, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_rebase_abort(
+    repo_root: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::rebase_abort(r, &repo_root, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_resolve_conflict(
+    repo_root: String,
+    path: String,
+    side: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::resolve_conflict(r, &repo_root, &path, &side, &workspace)
+            .map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn git_push(
     repo_root: String,
     workspace: Option<WorkspaceEnv>,

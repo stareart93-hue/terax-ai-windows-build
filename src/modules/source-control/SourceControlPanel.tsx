@@ -457,6 +457,24 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     void sourceControl.runRemoteAction("pull");
   }, [sourceControl]);
 
+  const handlePullRebase = useCallback(() => {
+    void sourceControl.runRemoteAction("pull-rebase");
+  }, [sourceControl]);
+
+  const handleResolveConflict = useCallback(
+    async (path: string, side: "ours" | "theirs") => {
+      const repo = scm.repo;
+      if (!repo) return;
+      try {
+        await native.gitResolveConflict(repo.repoRoot, path, side);
+      } catch (e) {
+        toast.error(`Failed to resolve conflict: ${String(e)}`);
+      }
+      await scm.refresh();
+    },
+    [scm],
+  );
+
   const rows = useMemo<RowDescriptor[]>(() => {
     const result: RowDescriptor[] = [];
     if (isDiverged) {
@@ -954,6 +972,8 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                             onToggleStageFile={scm.toggleStageFile}
                             onDiscardFile={scm.requestDiscardFile}
                             onOpenFile={onOpenFile}
+                            onPullRebase={handlePullRebase}
+                            onResolveConflict={handleResolveConflict}
                           />
                         </div>
                       );
@@ -1052,13 +1072,22 @@ type RowRendererProps = {
   onToggleStageFile: (entry: SourceControlFileEntry) => Promise<void>;
   onDiscardFile: (entry: SourceControlFileEntry) => void;
   onOpenFile?: (absolutePath: string) => void;
+  /** Pull with rebase (offered when the branch has diverged). */
+  onPullRebase?: () => Promise<void> | void;
+  /** Resolve a conflict file by taking one side wholesale. */
+  onResolveConflict?: (path: string, side: "ours" | "theirs") => Promise<void> | void;
 };
 
 const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
   const { row } = props;
   switch (row.kind) {
     case "banner-diverged":
-      return <DivergedBanner />;
+      return (
+        <DivergedBanner
+          busy={props.actionBusy === "pull-rebase"}
+          onPullRebase={props.onPullRebase}
+        />
+      );
     case "list-header":
       return <ListHeader {...props} row={row} />;
     case "entry":
@@ -1066,7 +1095,13 @@ const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
   }
 });
 
-function DivergedBanner() {
+function DivergedBanner({
+  busy,
+  onPullRebase,
+}: {
+  busy: boolean;
+  onPullRebase?: () => Promise<void> | void;
+}) {
   return (
     <div className="mx-2 mt-1 flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-foreground/[0.04] px-2 text-[10.5px] leading-none text-muted-foreground">
       <HugeiconsIcon
@@ -1079,8 +1114,23 @@ function DivergedBanner() {
         <span className="font-medium text-foreground/85">
           Diverged from upstream
         </span>
-        <span className="ml-1 opacity-75">— resolve in terminal</span>
+        <span className="ml-1 opacity-75">
+          {busy ? "— rebasing…" : "— pull with rebase or resolve in terminal"}
+        </span>
       </span>
+      {onPullRebase ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => void onPullRebase()}
+          className="h-5 gap-1 px-1.5 text-[10px]"
+          title="Pull remote and replay local commits on top (pull --rebase)"
+        >
+          {busy ? <Spinner className="size-2.5" /> : null}
+          Pull · Rebase
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -1126,6 +1176,7 @@ const EntryRow = memo(function EntryRow({
   onToggleStageFile,
   onDiscardFile,
   onOpenFile,
+  onResolveConflict,
 }: RowRendererProps & {
   row: Extract<RowDescriptor, { kind: "entry" }>;
 }) {
@@ -1140,6 +1191,7 @@ const EntryRow = memo(function EntryRow({
     actionBusy === `unstage:${entry.path}`;
   const isDiscardBusy = actionBusy === `discard:${entry.path}`;
   const disabled = actionBusy !== null;
+  const isConflict = entry.statusCode === "U";
 
   const absolutePath = repoRoot
     ? joinPath(repoRoot.replace(/\\/g, "/"), entry.path.replace(/\\/g, "/"))
@@ -1208,6 +1260,29 @@ const EntryRow = memo(function EntryRow({
               ) : null}
             </div>
           </button>
+
+          {isConflict && onResolveConflict ? (
+            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 data-[focused=true]:opacity-100 data-[selected=true]:opacity-100">
+              <button
+                type="button"
+                disabled={disabled}
+                title="Resolve conflict: keep our version"
+                onClick={() => void onResolveConflict(entry.path, "ours")}
+                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+              >
+                Ours
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                title="Resolve conflict: keep their version"
+                onClick={() => void onResolveConflict(entry.path, "theirs")}
+                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+              >
+                Theirs
+              </button>
+            </div>
+          ) : null}
 
           {showDiscard ? (
             <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 data-[focused=true]:opacity-100 data-[selected=true]:opacity-100">
