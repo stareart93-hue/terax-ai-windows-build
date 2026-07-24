@@ -113,7 +113,7 @@ fn is_lossy_text_fallback(p: &Path) -> bool {
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase())
             .as_deref(),
-        Some("pyx" | "pxd" | "pxi")
+        Some("py" | "pyw" | "pyx" | "pxd" | "pxi")
     )
 }
 
@@ -260,6 +260,19 @@ mod tests {
         match read_file_sync(&f, false).unwrap() {
             ReadResult::Text { content, .. } => {
                 assert!(content.contains("cdef char* name"));
+            }
+            _ => panic!("expected text"),
+        }
+    }
+
+    #[test]
+    fn read_file_treats_python_sources_as_lossy_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("script.py");
+        std::fs::write(&f, b"# coding: latin-1\nname = \"caf\xe9\"\n").unwrap();
+        match read_file_sync(&f, false).unwrap() {
+            ReadResult::Text { content, .. } => {
+                assert!(content.contains("name = "));
             }
             _ => panic!("expected text"),
         }
