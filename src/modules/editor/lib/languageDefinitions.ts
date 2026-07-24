@@ -71,7 +71,7 @@ export const LANGUAGES: LanguageDefinition[] = [
   },
   {
     name: "Python",
-    extensions: ["py"],
+    extensions: ["py", "pyx", "pxd", "pxi"],
     loader: () => import("@codemirror/lang-python").then((m) => m.python()),
     userSelectable: true,
   },

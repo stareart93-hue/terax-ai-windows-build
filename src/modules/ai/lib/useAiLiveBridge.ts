@@ -11,7 +11,23 @@ import type { Tab } from "@/modules/tabs";
 import type { Live } from "../store/chatStore";
 import { redactSensitive } from "./redact";
 
-type TuiWaitResult = "ready" | "gone" | "timeout";
+type TuiWaitResult = "ready" | "blocked" | "gone" | "timeout";
+
+export function claudeTuiNeedsUserChoice(buf: string): boolean {
+  const s = buf.toLowerCase();
+  return (
+    s.includes("do you trust") ||
+    s.includes("permission") ||
+    s.includes("select an option") ||
+    s.includes("choose an option") ||
+    (s.includes("yes") && s.includes("no") && s.includes("enter"))
+  );
+}
+
+export function claudeTuiAcceptsPrompt(buf: string): boolean {
+  const s = buf.toLowerCase();
+  return s.includes("shortcuts") && !claudeTuiNeedsUserChoice(s);
+}
 
 async function waitForClaudeTuiReady(
   readBuf: () => string | null,
@@ -21,7 +37,8 @@ async function waitForClaudeTuiReady(
   while (Date.now() - start < timeoutMs) {
     const buf = readBuf();
     if (buf === null) return "gone";
-    if (buf.includes("shortcuts") || buf.includes("? for")) return "ready";
+    if (claudeTuiNeedsUserChoice(buf)) return "blocked";
+    if (claudeTuiAcceptsPrompt(buf)) return "ready";
     await new Promise((r) => setTimeout(r, 120));
   }
   return "timeout";
@@ -128,9 +145,9 @@ export function useAiLiveBridge(params: Params) {
         useManagedAgentsStore
           .getState()
           .register({ leafId, tabId, sessionId, task: oneLine, cwd });
-        const hooksReady = invoke("agent_enable_hooks", { agent: "claude" }).catch(
-          () => {},
-        );
+        const hooksReady = invoke("agent_enable_hooks", {
+          agent: "claude",
+        }).catch(() => {});
         void (async () => {
           await Promise.all([whenSessionReady(leafId), hooksReady]);
           if (!writeToSession(leafId, "claude\r")) {
@@ -143,7 +160,11 @@ export function useAiLiveBridge(params: Params) {
           };
           const result = await waitForClaudeTuiReady(readBuf);
           if (result !== "ready") {
-            if (result === "timeout") {
+            if (result === "blocked") {
+              console.warn(
+                "[terax] Claude TUI needs a user choice; aborting prompt send",
+              );
+            } else if (result === "timeout") {
               console.warn(
                 "[terax] Claude TUI did not appear in time; aborting prompt send",
               );

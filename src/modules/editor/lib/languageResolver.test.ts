@@ -5,6 +5,7 @@ describe("resolveDisplayName", () => {
   it("resolves real extensions", () => {
     expect(resolveDisplayName("App.tsx")).toBe("TypeScript React");
     expect(resolveDisplayName("main.go")).toBe("Go");
+    expect(resolveDisplayName("module.pyx")).toBe("Python");
     expect(resolveDisplayName("README.md")).toBe("Markdown");
     expect(resolveDisplayName("query.sql")).toBe("SQL");
   });

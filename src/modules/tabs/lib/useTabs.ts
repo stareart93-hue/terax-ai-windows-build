@@ -52,6 +52,8 @@ export type EditorTab = TabBase & {
    * is replaced by the next single-click rather than accumulating.
    */
   preview: boolean;
+  /** Active tab before entering the transient preview slot. */
+  returnToTabId?: number;
   overrideLanguage?: string | null;
 };
 
@@ -176,6 +178,26 @@ export function nextActiveInSpace(
   return (sameSpace[idx - 1] ?? sameSpace[idx + 1]).id;
 }
 
+export function previewReturnTarget(
+  tabs: Tab[],
+  closing: EditorTab,
+): number | null {
+  if (!closing.preview || closing.returnToTabId === undefined) return null;
+  const target = tabs.find((t) => t.id === closing.returnToTabId);
+  if (!target || target.id === closing.id) return null;
+  return target.spaceId === closing.spaceId ? target.id : null;
+}
+
+export function returnTargetForNewPreview(
+  tabs: Tab[],
+  activeId: number,
+): number | undefined {
+  const active = tabs.find((t) => t.id === activeId);
+  if (!active) return undefined;
+  if (active.kind === "editor" && active.preview) return active.returnToTabId;
+  return active.id;
+}
+
 // Gap index is relative to the space's own strip, including the dragged tab.
 export function reorderTabsByGap(
   tabs: Tab[],
@@ -235,7 +257,10 @@ export function planSpaceRemoval(
   let activeId = currentActiveId;
   if (!next.some((t) => t.spaceId === fallbackSpaceId)) {
     const tabId = allocId();
-    next = [...next, coldTerminalTab(tabId, allocId(), fallbackSpaceId, fallbackCwd)];
+    next = [
+      ...next,
+      coldTerminalTab(tabId, allocId(), fallbackSpaceId, fallbackCwd),
+    ];
     activeId = tabId;
   } else if (!next.some((t) => t.id === currentActiveId)) {
     const inFallback = next.filter((t) => t.spaceId === fallbackSpaceId);
@@ -507,7 +532,9 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           targetId = existing.id;
           if ((existing as EditorTab).preview) {
             return curr.map((t) =>
-              t.id === existing.id ? { ...t, preview: false } : t,
+              t.id === existing.id
+                ? { ...t, preview: false, returnToTabId: undefined }
+                : t,
             );
           }
           return curr;
@@ -551,6 +578,10 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         );
         const id = nextIdRef.current++;
         targetId = id;
+        const returnToTabId = returnTargetForNewPreview(
+          curr,
+          activeIdRef.current,
+        );
         const tab: EditorTab = {
           id,
           kind: "editor",
@@ -559,6 +590,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           path,
           dirty: false,
           preview: true,
+          returnToTabId,
         };
         if (previewIdx === -1) return [...curr, tab];
         const next = [...curr];
@@ -577,7 +609,9 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   const pinTab = useCallback((id: number) => {
     setTabs((curr) =>
       curr.map((t) =>
-        t.id === id && t.kind === "editor" ? { ...t, preview: false } : t,
+        t.id === id && t.kind === "editor"
+          ? { ...t, preview: false, returnToTabId: undefined }
+          : t,
       ),
     );
   }, []);
@@ -907,8 +941,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       if (target?.kind === "terminal") {
         toDispose = leafIds(target.paneTree);
       }
+      const returnTarget =
+        target?.kind === "editor" ? previewReturnTarget(curr, target) : null;
       const next = curr.filter((t) => t.id !== id);
-      setActiveId((active) => (id === active ? fallback : active));
+      setActiveId((active) =>
+        id === active ? (returnTarget ?? fallback) : active,
+      );
       return next;
     });
     for (const lid of toDispose) disposeSession(lid);
@@ -948,7 +986,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         // editor tab: auto-promote from preview the moment the file becomes dirty.
         const autoPin =
           patch.dirty === true && (x as EditorTab).preview
-            ? { preview: false }
+            ? { preview: false, returnToTabId: undefined }
             : {};
         return {
           ...x,
@@ -966,9 +1004,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
 
   const selectByIndex = useCallback(
     (idx: number, spaceId?: string) => {
-      const t = spaceId
-        ? pickTabBySpaceIndex(tabs, idx, spaceId)
-        : tabs[idx];
+      const t = spaceId ? pickTabBySpaceIndex(tabs, idx, spaceId) : tabs[idx];
       if (t) setActiveId(t.id);
     },
     [tabs],

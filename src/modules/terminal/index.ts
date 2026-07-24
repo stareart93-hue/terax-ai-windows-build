@@ -12,6 +12,7 @@ export {
   writeToSession,
 } from "./lib/useTerminalSession";
 export {
+  type AgentPhase,
   type AgentTabStatus,
   tabAgentStatus,
   useAgentActivityStore,
