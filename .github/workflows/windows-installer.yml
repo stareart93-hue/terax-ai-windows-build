@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - feat/ai-git-ux-improvements
       - codex-windows-layout-installer
 
 jobs:
