@@ -2,6 +2,9 @@ name: Windows Installer
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex-windows-layout-installer
 
 jobs:
   build-windows-installer:
