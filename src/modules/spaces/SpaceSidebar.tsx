@@ -9,6 +9,8 @@ import {
   type AgentPhase,
 } from "@/modules/terminal";
 import {
+  ArrowDown01Icon,
+  ArrowRight01Icon,
   Cancel01Icon,
   CheckmarkCircle01Icon,
   ComputerTerminal02Icon,
@@ -93,6 +95,9 @@ export function SpaceSidebar({
   const phases = useAgentActivityStore((s) => s.phases);
   const agents = useAgentActivityStore((s) => s.agents);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [collapsedSpaceIds, setCollapsedSpaceIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const tabsBySpace = useMemo(() => {
     const m = new Map<string, Tab[]>();
@@ -132,9 +137,18 @@ export function SpaceSidebar({
             activeTabId={activeTabId}
             canDelete={spaces.length > 1}
             editing={editingId === space.id}
+            collapsed={collapsedSpaceIds.has(space.id)}
             phases={phases}
             agents={agents}
             onSwitch={() => setActive(space.id)}
+            onToggleCollapsed={() =>
+              setCollapsedSpaceIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(space.id)) next.delete(space.id);
+                else next.add(space.id);
+                return next;
+              })
+            }
             onStartRename={() => setEditingId(space.id)}
             onCommitRename={(name) => {
               const v = name.trim();
@@ -160,9 +174,11 @@ function SpaceSection({
   activeTabId,
   canDelete,
   editing,
+  collapsed,
   phases,
   agents,
   onSwitch,
+  onToggleCollapsed,
   onStartRename,
   onCommitRename,
   onCancelRename,
@@ -177,9 +193,11 @@ function SpaceSection({
   activeTabId: number;
   canDelete: boolean;
   editing: boolean;
+  collapsed: boolean;
   phases: Record<number, AgentPhase>;
   agents: Record<number, string>;
   onSwitch: () => void;
+  onToggleCollapsed: () => void;
   onStartRename: () => void;
   onCommitRename: (name: string) => void;
   onCancelRename: () => void;
@@ -210,20 +228,43 @@ function SpaceSection({
             </span>
           </div>
         ) : (
-          <button
-            type="button"
-            aria-current={active ? "true" : undefined}
-            onClick={onSwitch}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            <SpaceAvatar space={space} active={active} />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-              {space.name}
-            </span>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
-              {tabs.length}
-            </span>
-          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <button
+              type="button"
+              title={collapsed ? "Expand terminals" : "Collapse terminals"}
+              aria-label={
+                collapsed
+                  ? "Expand space terminals"
+                  : "Collapse space terminals"
+              }
+              aria-expanded={!collapsed}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCollapsed();
+              }}
+              className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <HugeiconsIcon
+                icon={collapsed ? ArrowRight01Icon : ArrowDown01Icon}
+                size={12}
+                strokeWidth={2}
+              />
+            </button>
+            <button
+              type="button"
+              aria-current={active ? "true" : undefined}
+              onClick={onSwitch}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <SpaceAvatar space={space} active={active} />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                {space.name}
+              </span>
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
+                {tabs.length}
+              </span>
+            </button>
+          </div>
         )}
         {!editing ? (
           <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -248,18 +289,20 @@ function SpaceSection({
           </div>
         ) : null}
       </div>
-      <div className="mt-0.5 flex flex-col gap-px pl-3">
-        {tabs.map((tab) => (
-          <SpaceTabRow
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeTabId}
-            claude={claudeStatusFor(phases, agents, tab)}
-            onJump={() => onJumpTab(tab.id)}
-            onClose={() => onCloseTab(tab.id)}
-          />
-        ))}
-      </div>
+      {!collapsed ? (
+        <div className="mt-0.5 flex flex-col gap-px pl-3">
+          {tabs.map((tab) => (
+            <SpaceTabRow
+              key={tab.id}
+              tab={tab}
+              active={tab.id === activeTabId}
+              claude={claudeStatusFor(phases, agents, tab)}
+              onJump={() => onJumpTab(tab.id)}
+              onClose={() => onCloseTab(tab.id)}
+            />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
