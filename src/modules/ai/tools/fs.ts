@@ -172,9 +172,17 @@ export function buildFsTools(ctx: ToolContext) {
         }
 
         try {
-          await native.writeFile(abs, content);
-          ctx.readCache.set(abs, { size: content.length, hash: djb2(content) });
-          return { path: abs, bytesWritten: content.length, ok: true };
+          // Honor a per-hunk partial-accept override if the user adjusted the
+          // proposed content in the diff pane (see edit.ts for the rationale).
+          const override = ctx.writeOverrides.get(abs);
+          const finalContent = override ?? content;
+          if (override !== undefined) ctx.writeOverrides.delete(abs);
+          await native.writeFile(abs, finalContent);
+          ctx.readCache.set(abs, {
+            size: finalContent.length,
+            hash: djb2(finalContent),
+          });
+          return { path: abs, bytesWritten: finalContent.length, ok: true };
         } catch (e) {
           return { error: String(e), path: abs };
         }

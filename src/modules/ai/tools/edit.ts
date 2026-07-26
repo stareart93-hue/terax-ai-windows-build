@@ -20,6 +20,7 @@ async function applyEdits(
   edits: { old_string: string; new_string: string; replace_all?: boolean }[],
   kind: "edit" | "multi_edit",
   readCache: Map<string, { size: number; hash: number }>,
+  writeOverrides?: Map<string, string>,
 ): Promise<EditResult> {
   const r = await native.readFile(abs);
   if (r.kind === "binary")
@@ -104,12 +105,19 @@ async function applyEdits(
   }
 
   try {
-    await native.writeFile(abs, content);
-    readCache.set(abs, { size: content.length, hash: djb2(content) });
+    // If the user accepted a partial (per-hunk) edit in the diff pane, their
+    // chosen content was seeded here. Write that instead of the full proposal
+    // so the disk reflects their decision, while still reporting success to
+    // the model (avoiding a spurious "edit failed, retry" loop).
+    const override = writeOverrides?.get(abs);
+    const finalContent = override ?? content;
+    if (override !== undefined) writeOverrides?.delete(abs);
+    await native.writeFile(abs, finalContent);
+    readCache.set(abs, { size: finalContent.length, hash: djb2(finalContent) });
     return {
       ok: true,
       replacements: totalReplacements,
-      bytesWritten: content.length,
+      bytesWritten: finalContent.length,
       path: abs,
     };
   } catch (err) {
@@ -148,6 +156,7 @@ export function buildEditTools(ctx: ToolContext) {
           [{ old_string, new_string, replace_all }],
           "edit",
           ctx.readCache,
+          ctx.writeOverrides,
         );
       },
     }),
@@ -180,7 +189,7 @@ export function buildEditTools(ctx: ToolContext) {
             path: abs,
           };
         }
-        return applyEdits(abs, edits, "multi_edit", ctx.readCache);
+        return applyEdits(abs, edits, "multi_edit", ctx.readCache, ctx.writeOverrides);
       },
     }),
   } as const;

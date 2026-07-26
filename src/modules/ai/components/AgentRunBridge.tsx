@@ -1,6 +1,7 @@
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import type { ToolUIPart, UIMessagePart } from "ai";
 import { useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import { native } from "../lib/native";
 import { checkReadable } from "../lib/security";
 import { resolvePath } from "../tools/tools";
@@ -159,6 +160,12 @@ function Bridge({
         // session trust, so flashing a diff tab open-then-close would be hostile.
         openedRef.current.add(id);
         policy.dec(info.toolName);
+        // Audible feedback: silent auto-approval reads as "broken". A brief
+        // toast confirms the edit was trusted through, with the target path.
+        const target = info.path ? info.path.split(/[\\/]/).pop() : info.toolName;
+        toast.success(`Auto-approved ${info.toolName}${target ? ` · ${target}` : ""}`, {
+          duration: 2500,
+        });
         void addToolApprovalResponse({ id, approved: true });
       }
     }

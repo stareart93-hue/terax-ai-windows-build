@@ -989,6 +989,11 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                             onAbortRebase={sourceControl.abortRebase}
                             onContinueRebase={sourceControl.continueRebase}
                             remoteError={sourceControl.lastRemoteError}
+                            conflictCount={
+                              scm.fileEntries.filter(
+                                (e) => e.statusCode === "U",
+                              ).length
+                            }
                           />
                         </div>
                       );
@@ -1095,6 +1100,8 @@ type RowRendererProps = {
   onContinueRebase?: () => Promise<void> | void;
   /** Human-readable remote error (e.g. raw rebase-conflict stderr) to show. */
   remoteError?: string | null;
+  /** Remaining unresolved conflict count, shown in the merge banner. */
+  conflictCount?: number;
   /** Resolve a conflict file by taking one side wholesale. */
   onResolveConflict?: (path: string, side: "ours" | "theirs") => Promise<void> | void;
 };
@@ -1115,6 +1122,7 @@ const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
           mode={row.mode}
           busy={props.actionBusy === "pull-rebase"}
           remoteError={props.remoteError}
+          conflictCount={props.conflictCount}
           onAbort={props.onAbortRebase}
           onContinue={props.onContinueRebase}
         />
@@ -1176,31 +1184,36 @@ function MergeBanner({
   mode,
   busy,
   remoteError,
+  conflictCount,
   onAbort,
   onContinue,
 }: {
   mode: "rebase" | "merge";
   busy: boolean;
   remoteError?: string | null;
+  conflictCount?: number;
   onAbort?: () => Promise<void> | void;
   onContinue?: () => Promise<void> | void;
 }) {
   // A conflict is likely when git emitted an error mid-operation. Detect the
   // common conflict signal so the copy can guide the user to resolve below.
-  const conflicted =
+  const errored =
     !!remoteError &&
     /conflict|could not apply|merge conflict/i.test(remoteError);
+  const remaining = conflictCount ?? 0;
   const title =
     mode === "rebase" ? "Rebase in progress" : "Merge in progress";
-  const hint = conflicted
-    ? mode === "rebase"
-      ? "— resolve conflicts below, then Continue"
-      : "— resolve conflicts below, then commit"
-    : busy
-      ? "— working…"
-      : mode === "rebase"
-        ? "— continue or abort"
-        : "— commit to finalize the merge";
+  const hint = busy
+    ? "— working…"
+    : remaining > 0
+      ? `— ${remaining} conflict${remaining === 1 ? "" : "s"} to resolve below`
+      : errored
+        ? mode === "rebase"
+          ? "— conflicts resolved, click Continue"
+          : "— conflicts resolved, commit to finalize"
+        : mode === "rebase"
+          ? "— continue or abort"
+          : "— commit to finalize the merge";
 
   return (
     <div className="mx-2 mt-2 flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/[0.07] px-2 py-1.5 text-[10.5px] leading-tight text-muted-foreground">
@@ -1243,7 +1256,7 @@ function MergeBanner({
           ) : null}
         </div>
       </div>
-      {conflicted && remoteError ? (
+      {errored && remoteError && remaining > 0 ? (
         <pre className="max-h-16 overflow-auto whitespace-pre-wrap rounded bg-background/60 px-1.5 py-1 font-mono text-[9.5px] text-amber-700 dark:text-amber-300">
           {remoteError.split("\n").slice(0, 4).join("\n")}
         </pre>
@@ -1379,13 +1392,16 @@ const EntryRow = memo(function EntryRow({
           </button>
 
           {isConflict && onResolveConflict ? (
-            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 data-[focused=true]:opacity-100 data-[selected=true]:opacity-100">
+            // Conflicts are an error state — keep the resolution affordances
+            // always visible (not hover-gated), tinted amber so they read as
+            // "needs action" while scanning the list.
+            <div className="flex shrink-0 items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/5 px-0.5 py-px">
               <button
                 type="button"
                 disabled={disabled}
                 title="Resolve conflict: keep our version"
                 onClick={() => void onResolveConflict(entry.path, "ours")}
-                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300 disabled:opacity-50"
               >
                 Ours
               </button>
@@ -1394,7 +1410,7 @@ const EntryRow = memo(function EntryRow({
                 disabled={disabled}
                 title="Resolve conflict: keep their version"
                 onClick={() => void onResolveConflict(entry.path, "theirs")}
-                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                className="rounded px-1 py-0.5 text-[9.5px] font-medium text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300 disabled:opacity-50"
               >
                 Theirs
               </button>

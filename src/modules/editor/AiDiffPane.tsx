@@ -155,27 +155,29 @@ export function AiDiffPane({
     [originalContent, lang],
   );
 
+  // WYSIWYG preview: the content the user will actually get if they Accept
+  // now — rejected hunks reverted to the original. When no hunk is rejected
+  // this equals proposedContent, so the common case is visually unchanged.
+  const previewContent = useMemo(
+    () => synthesizeFinalContent(originalContent, proposedContent, hunkStatus),
+    [originalContent, proposedContent, hunkStatus],
+  );
+
+  // Stats reflect original -> preview (what will actually be written), not the
+  // raw proposal, so the +/- counts stay honest as the user rejects hunks.
   const stats = useMemo(
-    () => computeLineStats(originalContent, proposedContent),
-    [originalContent, proposedContent],
+    () => computeLineStats(originalContent, previewContent),
+    [originalContent, previewContent],
   );
 
   const handleAccept = () => {
-    const finalContent = synthesizeFinalContent(
-      originalContent,
-      proposedContent,
-      hunkStatus,
-    );
-    onAccept(finalContent);
+    onAccept(previewContent);
   };
 
-  const toggleHunk = (i: number) => {
+  const setHunkStatusAt = (i: number, status: HunkStatus) => {
     setHunkStatus((cur) => {
       const next = [...cur];
-      const prev = next[i] ?? "pending";
-      // Cycle pending -> accepted -> rejected -> accepted.
-      next[i] =
-        prev === "accepted" ? "rejected" : prev === "rejected" ? "accepted" : "accepted";
+      next[i] = status;
       return next;
     });
   };
@@ -240,14 +242,14 @@ export function AiDiffPane({
         <HunkStrip
           hunks={hunks}
           statuses={hunkStatus}
-          onToggle={toggleHunk}
+          onSetStatus={setHunkStatusAt}
         />
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <CodeMirror
           ref={cmRef}
-          value={proposedContent}
+          value={previewContent}
           theme={themeExt}
           extensions={extensions}
           editable={false}
@@ -275,11 +277,11 @@ export function AiDiffPane({
 function HunkStrip({
   hunks,
   statuses,
-  onToggle,
+  onSetStatus,
 }: {
   hunks: { fromA: number; toA: number; fromB: number; toB: number }[];
   statuses: HunkStatus[];
-  onToggle: (i: number) => void;
+  onSetStatus: (i: number, status: HunkStatus) => void;
 }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/60 bg-muted/30 px-3 py-1.5">
@@ -290,30 +292,49 @@ function HunkStrip({
         const st = statuses[i] ?? "pending";
         const added = Math.max(0, h.toB - h.fromB);
         const removed = Math.max(0, h.toA - h.fromA);
+        // "kept" = accepted (use proposed); "reverted" = rejected (use original).
+        // Pending defaults to kept (apply). Each chip has two explicit buttons so
+        // the action is unambiguous — no hidden three-state cycle.
+        const kept = st !== "rejected";
         return (
-          <button
+          <div
             key={`hunk-${i}`}
-            type="button"
-            onClick={() => onToggle(i)}
-            title={`Hunk ${i + 1}: +${added} −${removed}. Click to toggle keep/revert.`}
-            className={
-              "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-mono tabular-nums transition-colors " +
-              (st === "rejected"
-                ? "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                : st === "accepted"
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                  : "border-border/60 bg-card text-muted-foreground hover:bg-accent")
-            }
+            className="flex items-center gap-px rounded-md border border-border/60 bg-card px-1 py-0.5 text-[10px] font-mono tabular-nums"
+            title={`Hunk ${i + 1}: +${added} −${removed}`}
           >
-            <span>{i + 1}</span>
+            <span className="px-0.5 text-muted-foreground">{i + 1}</span>
             <span className="text-emerald-600 dark:text-emerald-400">
               +{added}
             </span>
             <span className="text-rose-600 dark:text-rose-400">−{removed}</span>
-            <span className="ml-0.5">
-              {st === "rejected" ? "reverted" : st === "accepted" ? "kept" : ""}
-            </span>
-          </button>
+            <span className="mx-0.5 w-px self-stretch bg-border/60" aria-hidden />
+            <button
+              type="button"
+              onClick={() => onSetStatus(i, "accepted")}
+              title="Keep this hunk (use the AI's edit)"
+              className={
+                "rounded px-1 py-px transition-colors " +
+                (kept
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground")
+              }
+            >
+              Keep
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetStatus(i, "rejected")}
+              title="Revert this hunk (keep the original)"
+              className={
+                "rounded px-1 py-px transition-colors " +
+                (!kept
+                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground")
+              }
+            >
+              Revert
+            </button>
+          </div>
         );
       })}
     </div>

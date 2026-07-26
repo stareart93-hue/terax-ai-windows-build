@@ -18,6 +18,14 @@ export type ToolContext = {
   /** Read the terminal scrollback tail of a managed agent's leaf. */
   readAgentOutput: (leafId: number) => string | null;
   readCache: Map<string, { size: number; hash: number }>;
+  /**
+   * Per-path write overrides seeded by the user when they accept a partial
+   * (per-hunk) edit in the AI diff pane. When present, the edit/write tools
+   * write this content instead of their own computed result, so the model is
+   * told its edit "applied" (avoiding spurious retries) while the disk gets
+   * the user's chosen subset. Consumed once and cleared.
+   */
+  writeOverrides: Map<string, string>;
   /** Active chat session id — used by tools that persist per-session state (todos). */
   getSessionId: () => string | null;
 };

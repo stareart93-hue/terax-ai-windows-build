@@ -26,6 +26,7 @@ import {
   useChatStore,
   useSelectionAskAi,
 } from "@/modules/ai";
+import { seedWriteOverride } from "@/modules/ai/store/writeOverrides";
 import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
@@ -304,29 +305,25 @@ export default function App() {
   /**
    * AI diff accept. When the user kept every hunk, the synthesized content
    * equals the proposed content, so we simply approve and let the tool write.
-   * When some hunks were reverted (partial rejection), we write the
-   * synthesized content ourselves and deny the tool call — the model is told
-   * its edit was not applied, which is the correct signal, and the user's
-   * partial choice lands on disk.
+   * When some hunks were reverted (partial rejection), we seed the user's
+   * chosen content as a write override for the active session, THEN approve —
+   * the tool runs, sees the override, and writes the user's subset while
+   * reporting success to the model. This avoids the prior failure mode where
+   * denying the call made the model believe its edit failed and retry.
    */
   const handleAiDiffAccept = useCallback(
-    async (approvalId: string, finalContent: string) => {
+    (approvalId: string, finalContent: string) => {
       const tab = tabsRef.current.find(
         (t): t is AiDiffTab =>
           t.kind === "ai-diff" && t.approvalId === approvalId,
       );
       const proposed = tab?.proposedContent ?? "";
-      if (finalContent !== proposed) {
-        if (tab) {
-          try {
-            await native.writeFile(tab.path, finalContent);
-            toast.success("Applied partial edit to disk");
-          } catch (e) {
-            toast.error(`Failed to write: ${String(e)}`);
-          }
+      if (finalContent !== proposed && tab) {
+        const sessionId = useChatStore.getState().activeSessionId;
+        if (sessionId) {
+          seedWriteOverride(sessionId, tab.path, finalContent);
+          toast.message("Applied with your hunk changes");
         }
-        respondToApproval(approvalId, false);
-        return;
       }
       respondToApproval(approvalId, true);
     },

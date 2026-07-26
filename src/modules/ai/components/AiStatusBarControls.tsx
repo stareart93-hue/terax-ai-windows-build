@@ -66,6 +66,7 @@ import {
 } from "../config";
 import { ACCEPTED_FILES, useComposer } from "../lib/composer";
 import { toggleFavoriteModel } from "../lib/modelPrefs";
+import { useApprovalPolicyStore } from "../store/approvalPolicy";
 import { useChatStore } from "../store/chatStore";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 
@@ -111,7 +112,7 @@ export function AiStatusBarControls() {
   const closePanel = useChatStore((s) => s.closePanel);
 
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-1">
       <input
         ref={fileInputRef}
         type="file"
@@ -168,6 +169,7 @@ export function AiStatusBarControls() {
         <ContextIndicatorLive />
       </Suspense>
       <SessionPicker />
+      <TrustBadge />
 
       <span className="mx-1 h-8 w-px bg-border" aria-hidden />
       <Button
@@ -316,7 +318,7 @@ function ModelDropdown() {
               : `${current.label} — no key configured`
           }
         >
-          {current.label}
+          <span className="max-w-[9rem] truncate">{current.label}</span>
           <HugeiconsIcon
             icon={ArrowDown01Icon}
             size={11}
@@ -728,5 +730,29 @@ function IconBtn({
     >
       {children}
     </Button>
+  );
+}
+
+/**
+ * Shows while session-scoped tool trust is active (the user granted "allow this
+ * session"). Without it, auto-approved edits happen silently and the user has
+ * no way to tell trust is in effect — or that it will lapse on session switch.
+ */
+function TrustBadge() {
+  const count = useApprovalPolicyStore((s) => s.sessionAllowed.length);
+  const budgetEntries = useApprovalPolicyStore(
+    (s) => Object.keys(s.approveAllRemaining).length,
+  );
+  const active = count > 0 || budgetEntries > 0;
+  if (!active) return null;
+  const title = `Trusting ${count} tool kind${count === 1 ? "" : "s"} this session. Lapses on session switch.`;
+  return (
+    <span
+      title={title}
+      className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-emerald-600 dark:text-emerald-400"
+    >
+      <HugeiconsIcon icon={Tick01Icon} size={9} strokeWidth={2.5} />
+      Trust
+    </span>
   );
 }

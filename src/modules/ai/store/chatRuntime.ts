@@ -10,6 +10,7 @@ import { useAgentsStore } from "./agentsStore";
 import { usePlanStore } from "./planStore";
 import { createContextAwareTransport } from "../lib/transport";
 import type { ToolContext } from "../tools/tools";
+import { getWriteOverrides } from "./writeOverrides";
 import {
   chats,
   getActiveProviderKey,
@@ -20,6 +21,8 @@ import {
 
 function makeChat(sessionId: string): Chat<UIMessage> {
   const readCache = new Map<string, { size: number; hash: number }>();
+  // Use the shared registry instance so the diff-accept path can seed it.
+  const writeOverrides = getWriteOverrides(sessionId);
   const toolContext: ToolContext = {
     getCwd: () => useChatStore.getState().live.getCwd(),
     getWorkspaceRoot: () => useChatStore.getState().live.getWorkspaceRoot(),
@@ -34,6 +37,7 @@ function makeChat(sessionId: string): Chat<UIMessage> {
     readAgentOutput: (leafId) =>
       useChatStore.getState().live.readLeafBuffer(leafId),
     readCache,
+    writeOverrides,
     getSessionId: () => sessionId,
   };
 

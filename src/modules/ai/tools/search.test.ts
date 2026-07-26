@@ -30,6 +30,7 @@ function makeContext(): ToolContext {
     spawnAgent: () => null,
     readAgentOutput: () => null,
     readCache: new Map(),
+    writeOverrides: new Map(),
     getSessionId: () => "session",
   };
 }
