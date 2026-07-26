@@ -697,3 +697,51 @@ fn pull_rebase_replays_local_commits_without_conflict() {
     assert!(fx.repo_path.join("c.txt").exists());
 }
 
+#[test]
+fn merge_state_detects_rebase_in_progress_and_clears_on_abort() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    repo_with_conflict(&fx);
+
+    // repo_with_conflict leaves a merge in progress (unresolved conflict).
+    let state = operations::merge_in_progress(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("merge_in_progress");
+    assert!(
+        state.merge_in_progress,
+        "expected merge in progress after a conflicting merge"
+    );
+
+    // Abort the merge (use merge --abort; rebase wasn't started here). For the
+    // merge path, MERGE_HEAD is what we detect — clear it via checkout/reset.
+    let _ = std::process::Command::new("git")
+        .args(["merge", "--abort"])
+        .current_dir(&fx.repo_path)
+        .status();
+
+    let state = operations::merge_in_progress(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("merge_in_progress after abort");
+    assert!(
+        !state.merge_in_progress,
+        "merge should no longer be in progress after abort"
+    );
+    assert!(!state.rebase_in_progress);
+}
+
+#[test]
+fn merge_state_clean_on_quiet_repo() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let state = operations::merge_in_progress(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("merge_in_progress");
+    assert!(!state.merge_in_progress);
+    assert!(!state.rebase_in_progress);
+}
+

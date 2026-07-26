@@ -42,6 +42,9 @@ export type SourceControlSummary = {
   localError: string | null;
   busyAction: SourceControlRemoteAction | null;
   lastRemoteError: string | null;
+  mergeState: { rebaseInProgress: boolean; mergeInProgress: boolean };
+  abortRebase: () => Promise<void>;
+  continueRebase: () => Promise<void>;
   applyStatus: (
     updater: (status: GitStatusSnapshot) => GitStatusSnapshot,
   ) => void;
@@ -69,6 +72,7 @@ type SourceControlSummaryState = {
   localError: string | null;
   busyAction: SourceControlRemoteAction | null;
   lastRemoteError: string | null;
+  mergeState: { rebaseInProgress: boolean; mergeInProgress: boolean };
 };
 
 function normalizeError(error: unknown): string {
@@ -164,6 +168,7 @@ export function useSourceControl(
     localError: null,
     busyAction: null,
     lastRemoteError: null,
+    mergeState: { rebaseInProgress: false, mergeInProgress: false },
   });
   const stateRef = useRef(state);
   const requestIdRef = useRef(0);
@@ -194,6 +199,7 @@ export function useSourceControl(
       localError: null,
       busyAction: null,
       lastRemoteError: null,
+      mergeState: { rebaseInProgress: false, mergeInProgress: false },
     });
   }, [workspaceKey]);
 
@@ -223,6 +229,7 @@ export function useSourceControl(
           localError: null,
           busyAction: null,
           lastRemoteError: null,
+          mergeState: { rebaseInProgress: false, mergeInProgress: false },
         });
         return;
       }
@@ -322,6 +329,16 @@ export function useSourceControl(
           }
         }
 
+        // Detect an in-progress rebase or merge so the UI can surface
+        // abort/continue affordances instead of dead-ending the user.
+        let mergeState = stateRef.current.mergeState;
+        try {
+          mergeState = await native.gitMergeState(repo.repoRoot);
+          if (requestId !== requestIdRef.current) return;
+        } catch {
+          // Non-fatal: keep previous mergeState.
+        }
+
         setState((current) => ({
           ...current,
           repo,
@@ -330,6 +347,7 @@ export function useSourceControl(
           isLoading: false,
           localError: null,
           lastRemoteError: nextRemoteError,
+          mergeState,
         }));
       } catch (error) {
         if (requestId !== requestIdRef.current) return;
@@ -432,6 +450,7 @@ export function useSourceControl(
         localError: null,
         busyAction: null,
         lastRemoteError: null,
+        mergeState: { rebaseInProgress: false, mergeInProgress: false },
       });
       return;
     }
@@ -482,6 +501,42 @@ export function useSourceControl(
     };
   }, [refresh, enabled]);
 
+  const abortRebase = useCallback(async () => {
+    const { repo } = stateRef.current;
+    if (!repo) return;
+    setState((current) => ({ ...current, busyAction: "pull-rebase" }));
+    try {
+      await native.gitRebaseAbort(repo.repoRoot);
+      setState((current) => ({ ...current, lastRemoteError: null }));
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        lastRemoteError: normalizeError(error),
+      }));
+    } finally {
+      setState((current) => ({ ...current, busyAction: null }));
+      await refresh({ remote: "never" });
+    }
+  }, [refresh]);
+
+  const continueRebase = useCallback(async () => {
+    const { repo } = stateRef.current;
+    if (!repo) return;
+    setState((current) => ({ ...current, busyAction: "pull-rebase" }));
+    try {
+      await native.gitRebaseContinue(repo.repoRoot);
+      setState((current) => ({ ...current, lastRemoteError: null }));
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        lastRemoteError: normalizeError(error),
+      }));
+    } finally {
+      setState((current) => ({ ...current, busyAction: null }));
+      await refresh({ remote: "never" });
+    }
+  }, [refresh]);
+
   return useMemo<SourceControlSummary>(
     () => ({
       repo: state.repo,
@@ -495,10 +550,13 @@ export function useSourceControl(
       localError: state.localError,
       busyAction: state.busyAction,
       lastRemoteError: state.lastRemoteError,
+      mergeState: state.mergeState,
+      abortRebase,
+      continueRebase,
       applyStatus,
       refresh,
       runRemoteAction,
     }),
-    [state, applyStatus, refresh, runRemoteAction],
+    [state, applyStatus, refresh, runRemoteAction, abortRebase, continueRebase],
   );
 }

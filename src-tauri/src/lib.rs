@@ -286,6 +286,8 @@ pub fn run() {
             git::commands::git_pull_ff_only,
             git::commands::git_pull_rebase,
             git::commands::git_rebase_abort,
+            git::commands::git_rebase_continue,
+            git::commands::git_merge_state,
             git::commands::git_resolve_conflict,
             git::commands::git_push,
             git::commands::git_log,

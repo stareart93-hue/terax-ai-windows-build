@@ -337,6 +337,19 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
+  gitRebaseContinue: (repoRoot: string) =>
+    invoke<void>("git_rebase_continue", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitMergeState: (repoRoot: string) =>
+    invoke<{ rebaseInProgress: boolean; mergeInProgress: boolean }>(
+      "git_merge_state",
+      {
+        repoRoot,
+        workspace: currentWorkspaceEnv(),
+      },
+    ),
   gitResolveConflict: (repoRoot: string, path: string, side: "ours" | "theirs") =>
     invoke<void>("git_resolve_conflict", {
       repoRoot,

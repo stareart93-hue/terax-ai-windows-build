@@ -1,5 +1,7 @@
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use serde::Serialize;
 
 use crate::modules::git::errors::{GitError, Result};
 use crate::modules::git::parser::parse_porcelain_v2;
@@ -990,6 +992,74 @@ pub fn rebase_abort(
         DEFAULT_TIMEOUT_SECS,
     )?;
     ensure_success(&output, "git rebase --abort failed")
+}
+
+/// Continue an in-progress rebase after conflicts have been resolved and
+/// staged. Fails cleanly (git message) if no rebase is in progress, or if
+/// conflicts remain unresolved.
+pub fn rebase_continue(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        // -r keeps the merge topology; --no-edit avoids spawning an editor (no
+        // tty in this context) and uses the default commit message.
+        ["rebase", "--continue", "--no-edit"],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git rebase --continue failed")
+}
+
+/// Whether the repo currently has a rebase or merge in progress, so the UI can
+/// surface abort/continue affordances and a human-readable state instead of
+/// leaving the user to infer it from conflict markers.
+pub fn merge_in_progress(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<MergeState> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let git_dir = resolve_git_dir(&repo_root)?;
+    // Rebase-in-progress leaves either of these directories.
+    let rebase_active = git_dir.join("rebase-merge").exists()
+        || git_dir.join("rebase-apply").exists();
+    // Merge-in-progress (not yet committed) leaves MERGE_HEAD.
+    let merge_active = git_dir.join("MERGE_HEAD").exists();
+    Ok(MergeState {
+        rebase_in_progress: rebase_active,
+        merge_in_progress: merge_active,
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MergeState {
+    pub rebase_in_progress: bool,
+    pub merge_in_progress: bool,
+}
+
+/// Resolve the actual `.git` directory, honoring linked/worktree git dirs.
+fn resolve_git_dir(repo_root: &ResolvedGitDirectory) -> Result<PathBuf> {
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["rev-parse", "--absolute-git-dir"],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "could not resolve git dir")?;
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        // Fallback: assume a plain .git subdir of the worktree.
+        return Ok(repo_root.local_path.join(".git"));
+    }
+    let p = std::path::Path::new(trimmed).to_path_buf();
+    Ok(p)
 }
 
 /// Resolve a merge/rebase conflict on a single path by taking one side

@@ -103,12 +103,15 @@ const SOURCE_CONTROL_TOOLTIP_CLASS =
 
 const ROW_HEIGHTS = {
   banner: 32,
+  // Merge banner is taller (title row + optional error pre block).
+  bannerMerge: 56,
   header: 30,
   entry: 30,
 } as const;
 
 type RowDescriptor =
   | { kind: "banner-diverged"; key: string }
+  | { kind: "banner-merge"; key: string; mode: "rebase" | "merge" }
   | { kind: "list-header"; key: string; count: number }
   | { kind: "entry"; key: string; entry: SourceControlFileEntry };
 
@@ -477,7 +480,14 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
   const rows = useMemo<RowDescriptor[]>(() => {
     const result: RowDescriptor[] = [];
-    if (isDiverged) {
+    // An in-progress rebase/merge takes precedence over the diverged banner:
+    // the repo is mid-operation and the user needs abort/continue/commit
+    // affordances, not a fresh "pull with rebase" prompt.
+    if (sourceControl.mergeState.rebaseInProgress) {
+      result.push({ kind: "banner-merge", key: "banner-merge", mode: "rebase" });
+    } else if (sourceControl.mergeState.mergeInProgress) {
+      result.push({ kind: "banner-merge", key: "banner-merge", mode: "merge" });
+    } else if (isDiverged) {
       result.push({ kind: "banner-diverged", key: "banner-diverged" });
     }
     if (changedCount > 0) {
@@ -521,6 +531,8 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       switch (row.kind) {
         case "banner-diverged":
           return ROW_HEIGHTS.banner;
+        case "banner-merge":
+          return ROW_HEIGHTS.bannerMerge;
         case "list-header":
           return ROW_HEIGHTS.header;
         case "entry":
@@ -974,6 +986,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                             onOpenFile={onOpenFile}
                             onPullRebase={handlePullRebase}
                             onResolveConflict={handleResolveConflict}
+                            onAbortRebase={sourceControl.abortRebase}
+                            onContinueRebase={sourceControl.continueRebase}
+                            remoteError={sourceControl.lastRemoteError}
                           />
                         </div>
                       );
@@ -1074,6 +1089,12 @@ type RowRendererProps = {
   onOpenFile?: (absolutePath: string) => void;
   /** Pull with rebase (offered when the branch has diverged). */
   onPullRebase?: () => Promise<void> | void;
+  /** Abort an in-progress rebase. */
+  onAbortRebase?: () => Promise<void> | void;
+  /** Continue an in-progress rebase after conflicts resolved. */
+  onContinueRebase?: () => Promise<void> | void;
+  /** Human-readable remote error (e.g. raw rebase-conflict stderr) to show. */
+  remoteError?: string | null;
   /** Resolve a conflict file by taking one side wholesale. */
   onResolveConflict?: (path: string, side: "ours" | "theirs") => Promise<void> | void;
 };
@@ -1086,6 +1107,16 @@ const RowRenderer = memo(function RowRenderer(props: RowRendererProps) {
         <DivergedBanner
           busy={props.actionBusy === "pull-rebase"}
           onPullRebase={props.onPullRebase}
+        />
+      );
+    case "banner-merge":
+      return (
+        <MergeBanner
+          mode={row.mode}
+          busy={props.actionBusy === "pull-rebase"}
+          remoteError={props.remoteError}
+          onAbort={props.onAbortRebase}
+          onContinue={props.onContinueRebase}
         />
       );
     case "list-header":
@@ -1130,6 +1161,92 @@ function DivergedBanner({
           {busy ? <Spinner className="size-2.5" /> : null}
           Pull · Rebase
         </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Banner shown while a rebase or merge is in progress. The most important state
+ * in source control — the user must be able to either back out (abort) or move
+ * forward (continue / commit). Surfaces a human-readable explanation and, when
+ * the operation conflicted, the remote error so the user isn't left guessing.
+ */
+function MergeBanner({
+  mode,
+  busy,
+  remoteError,
+  onAbort,
+  onContinue,
+}: {
+  mode: "rebase" | "merge";
+  busy: boolean;
+  remoteError?: string | null;
+  onAbort?: () => Promise<void> | void;
+  onContinue?: () => Promise<void> | void;
+}) {
+  // A conflict is likely when git emitted an error mid-operation. Detect the
+  // common conflict signal so the copy can guide the user to resolve below.
+  const conflicted =
+    !!remoteError &&
+    /conflict|could not apply|merge conflict/i.test(remoteError);
+  const title =
+    mode === "rebase" ? "Rebase in progress" : "Merge in progress";
+  const hint = conflicted
+    ? mode === "rebase"
+      ? "— resolve conflicts below, then Continue"
+      : "— resolve conflicts below, then commit"
+    : busy
+      ? "— working…"
+      : mode === "rebase"
+        ? "— continue or abort"
+        : "— commit to finalize the merge";
+
+  return (
+    <div className="mx-2 mt-2 flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/[0.07] px-2 py-1.5 text-[10.5px] leading-tight text-muted-foreground">
+      <div className="flex items-center gap-1.5">
+        <HugeiconsIcon
+          icon={Alert02Icon}
+          size={11}
+          strokeWidth={1.9}
+          className="shrink-0 text-amber-600 dark:text-amber-400"
+        />
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-medium text-foreground/85">{title}</span>
+          <span className="ml-1 opacity-80">{hint}</span>
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          {onContinue && mode === "rebase" ? (
+            <Button
+              size="xs"
+              variant="default"
+              disabled={busy}
+              onClick={() => void onContinue()}
+              className="h-5 gap-1 px-1.5 text-[10px]"
+              title="Continue the rebase after resolving conflicts (git rebase --continue)"
+            >
+              {busy ? <Spinner className="size-2.5" /> : null}
+              Continue
+            </Button>
+          ) : null}
+          {onAbort ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => void onAbort()}
+              className="h-5 gap-1 px-1.5 text-[10px]"
+              title="Abort and return to the previous state (git rebase --abort)"
+            >
+              Abort
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {conflicted && remoteError ? (
+        <pre className="max-h-16 overflow-auto whitespace-pre-wrap rounded bg-background/60 px-1.5 py-1 font-mono text-[9.5px] text-amber-700 dark:text-amber-300">
+          {remoteError.split("\n").slice(0, 4).join("\n")}
+        </pre>
       ) : null}
     </div>
   );

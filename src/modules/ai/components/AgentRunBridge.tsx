@@ -154,6 +154,10 @@ function Bridge({
         const path = info.path ? resolvePathSafe(info.path, cwd) : undefined;
         if (!isAutoApproved(policy, info.toolName, path)) continue;
         autoHandledRef.current.add(id);
+        // Also mark in openedRef so the diff-tab effect (below) skips opening a
+        // review tab for this call — the user opted out of review by granting
+        // session trust, so flashing a diff tab open-then-close would be hostile.
+        openedRef.current.add(id);
         policy.dec(info.toolName);
         void addToolApprovalResponse({ id, approved: true });
       }
