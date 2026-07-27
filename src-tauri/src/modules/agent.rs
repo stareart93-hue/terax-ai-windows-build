@@ -27,6 +27,15 @@ const AGENTS: &[AgentSpec] = &[
         file: "settings.json",
         events: &[
             ("UserPromptSubmit", "working"),
+            // PreToolUse/PostToolUse fire around every tool call. Mapping them
+            // to "working" is what recovers state from "attention" after the
+            // user answers a permission prompt — Notification (attention) is
+            // an async event with no follow-up hook of its own, so without
+            // these the agent would stay stuck on "attention" while it keeps
+            // working. They also keep "working" live during long multi-tool
+            // turns. set_working dedupes, so the frequency is harmless.
+            ("PreToolUse", "working"),
+            ("PostToolUse", "working"),
             ("Notification", "attention"),
             ("Stop", "finished"),
         ],

@@ -591,4 +591,24 @@ mod tests {
             vec![Transition::Attention]
         );
     }
+
+    #[test]
+    fn working_signal_recovers_from_attention() {
+        // After a Notification (attention), the user answers and Claude resumes
+        // working — modeled by a PreToolUse/UserPromptSubmit "working" marker.
+        // The detector must flip back to Working and emit the transition; this
+        // is what unsticks the UI from "attention" while the agent keeps going.
+        let mut d = AgentDetector::new();
+        run(&mut d, &osc("133;C;claude"));
+        assert_eq!(
+            run(&mut d, &osc("777;notify;Terax;attention")),
+            vec![Transition::Attention]
+        );
+        assert_eq!(
+            run(&mut d, &osc("777;notify;Terax;working")),
+            vec![Transition::Working]
+        );
+        // A second working while already working is deduped (no flap).
+        assert!(run(&mut d, &osc("777;notify;Terax;working")).is_empty());
+    }
 }
