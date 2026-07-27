@@ -190,8 +190,11 @@ impl AgentDetector {
         };
         match ps {
             b"133" => self.handle_osc133(pt, emit),
-            // OSC 9;4 is taskbar progress, not a notification.
-            b"9" if !pt.starts_with(b"4;") && pt != b"4" => self.generic_attention(emit),
+            // OSC 9;4 is taskbar progress; other OSC 9 variants and foreign
+            // sequences are ignored. We previously treated them as generic
+            // "attention", but agents and shells emit a lot of unrelated OSC
+            // (titles, progress, iTerm integrations) which caused false
+            // "needs input" states. Only our own OSC 777 markers drive state.
             b"777" => self.handle_osc777(pt, emit),
             _ => {}
         }
@@ -230,9 +233,9 @@ impl AgentDetector {
                 }
                 _ => {}
             }
-            return;
         }
-        self.generic_attention(emit);
+        // Foreign OSC 777 (e.g. desktop notifications from other tools): do
+        // nothing. Previously this surfaced as a false "attention" state.
     }
 
     fn handle_osc133<F: FnMut(Transition)>(&mut self, pt: &[u8], emit: &mut F) {
@@ -270,13 +273,6 @@ impl AgentDetector {
         if self.status != Status::Working {
             self.status = Status::Working;
             emit(Transition::Working);
-        }
-    }
-
-    fn generic_attention<F: FnMut(Transition)>(&mut self, emit: &mut F) {
-        if self.armed {
-            self.status = Status::Waiting;
-            emit(Transition::Attention);
         }
     }
 
@@ -529,18 +525,16 @@ mod tests {
     }
 
     #[test]
-    fn generic_osc777_and_osc9_attention_only_when_armed() {
+    fn foreign_osc_is_ignored_even_when_armed() {
+        // Only our own OSC 777 Terax markers drive state. Foreign OSC 777
+        // (unknown agents/notify formats) and OSC 9 (progress/notifications
+        // from other tools) must NOT produce false "attention" states.
         let mut d = AgentDetector::new();
         assert!(run(&mut d, &osc("777;notify;Other;ready")).is_empty());
         run(&mut d, &osc("133;C;codex"));
-        assert_eq!(
-            run(&mut d, &osc("777;notify;Codex;ready")),
-            vec![Transition::Attention]
-        );
-        assert_eq!(
-            run(&mut d, &osc("9;needs you")),
-            vec![Transition::Attention]
-        );
+        // Armed now, but foreign markers are still ignored.
+        assert!(run(&mut d, &osc("777;notify;Codex;ready")).is_empty());
+        assert!(run(&mut d, &osc("9;needs you")).is_empty());
         assert!(run(&mut d, &osc("9;4;1;50")).is_empty());
     }
 

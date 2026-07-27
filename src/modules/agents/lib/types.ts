@@ -34,6 +34,10 @@ export type AgentSession = {
   startedAt: number;
   lastActivityAt: number;
   attentionSince: number | null;
+  /** True once we've received a real working/attention/finished signal — i.e.
+   *  the agent's hooks are installed and reporting. Used to gate the silence
+   *  fallback so it only applies to hook-less sessions. */
+  everSignaled: boolean;
 };
 
 export type AgentNotification = {

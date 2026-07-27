@@ -132,14 +132,20 @@ export function AgentNotificationsBridge({
 
   // Silence fallback: demote stale "working" sessions to "idle" so the UI
   // doesn't read "working" forever when an agent's hooks aren't installed
-  // (no Stop marker ever arrives). Checking lastActivityAt against now lets a
-  // turn that keeps emitting signals stay working.
+  // (no Stop marker ever arrives). Gated on `everSignaled` — once a session has
+  // reported a real working/attention/finished transition, its hooks are
+  // working and we trust them; the fallback would otherwise demote a genuinely
+  // long-running turn (which emits no signal while thinking/tooling) to idle.
   useEffect(() => {
     const tick = () => {
       const now = Date.now();
       const store = useAgentStore.getState();
       for (const s of Object.values(store.sessions)) {
-        if (s.status === "working" && now - s.lastActivityAt > WORKING_SILENCE_MS) {
+        if (
+          !s.everSignaled &&
+          s.status === "working" &&
+          now - s.lastActivityAt > WORKING_SILENCE_MS
+        ) {
           store.setStatus(s.leafId, "idle");
         }
       }

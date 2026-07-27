@@ -40,10 +40,14 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
             leafId,
             tabId,
             agent,
-            status: "working",
+            // Start in idle (waiting for the first prompt), not working — the
+            // agent process being up doesn't mean it's doing anything yet.
+            // The first UserPromptSubmit hook flips it to working.
+            status: "idle",
             startedAt: now,
             lastActivityAt: now,
             attentionSince: null,
+            everSignaled: false,
           },
         },
       };
@@ -62,6 +66,8 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
             status,
             lastActivityAt: now,
             attentionSince: status === "attention" ? now : null,
+            // A real status transition means the agent's hooks are reporting.
+            everSignaled: true,
           },
         },
       };

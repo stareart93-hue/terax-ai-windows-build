@@ -21,10 +21,10 @@ describe("agentStore three-state lifecycle", () => {
     });
   });
 
-  it("starts a session in working with no attentionSince", () => {
+  it("starts a session in idle (awaiting first prompt) with no attentionSince", () => {
     useAgentStore.getState().start(1, 10, "claude");
     const s = useAgentStore.getState().sessions[1];
-    expect(s.status).toBe("working");
+    expect(s.status).toBe("idle");
     expect(s.attentionSince).toBeNull();
   });
 
@@ -88,8 +88,9 @@ describe("agentStore three-state lifecycle", () => {
   it("setStatus is a no-op when the status is unchanged", () => {
     const { start, setStatus } = useAgentStore.getState();
     start(1, 10, "claude");
+    setStatus(1, "working"); // move to working first
     const before = useAgentStore.getState().sessions[1];
-    setStatus(1, "working"); // same as initial
+    setStatus(1, "working"); // same as current — no-op
     const after = useAgentStore.getState().sessions[1];
     // Reference equality: no new object created.
     expect(after).toBe(before);
