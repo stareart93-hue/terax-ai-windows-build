@@ -276,15 +276,47 @@ pub fn agent_enable_hooks(agent: String) -> Result<(), String> {
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
 
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(s) => existing_config(Some(&s), &path)?,
+    enable_hooks_at(spec, &path)
+}
+
+/// Shared merge-and-write used by both the manual command and the auto-enable
+/// path. The caller is responsible for creating the parent dir when appropriate
+/// (the manual path creates it; the auto path deliberately does not).
+fn enable_hooks_at(spec: &AgentSpec, path: &std::path::Path) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => existing_config(Some(&s), path)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
         Err(e) => return Err(format!("read {}: {e}", path.display())),
     };
-
     let merged = merge_hooks(existing, spec);
     let out = serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?;
-    write_atomic(&path, &out)
+    write_atomic(path, &out)
+}
+
+/// Auto-enable hooks for every agent whose config directory already exists
+/// (i.e. the user has installed that agent). Called once at app startup so that
+/// Claude Code state transitions work out of the box without the user having to
+/// click "Enable". Idempotent — no-op when hooks are already present. Deliberately
+/// does NOT create the agent config dir, so users who never installed an agent
+/// get no stray files written.
+pub fn auto_enable_hooks_if_installed() {
+    for spec in AGENTS {
+        // Only act when the agent's own directory is already on disk.
+        let Ok(path) = settings_path(spec) else { continue };
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        if !parent.exists() {
+            continue;
+        }
+        // Already fully installed? Skip to avoid touching the file unnecessarily.
+        if agent_hooks_status(spec.agent.to_string()) {
+            continue;
+        }
+        if let Err(e) = enable_hooks_at(spec, &path) {
+            log::warn!("auto-enable {} hooks failed: {e}", spec.agent);
+        }
+    }
 }
 
 // The raw OSC 777 bytes the detector parses. Kept in one place so the Windows

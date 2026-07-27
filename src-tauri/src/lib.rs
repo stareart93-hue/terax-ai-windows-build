@@ -204,6 +204,15 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .setup(|_app| {
+            // Best-effort: auto-enable agent notification hooks for any agent
+            // the user has already installed (e.g. ~/.claude exists). Idempotent
+            // and never creates agent config dirs, so non-users are unaffected.
+            // Runs off the main thread to avoid blocking startup on fs IO.
+            let handle = _app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::modules::agent::auto_enable_hooks_if_installed();
+                let _ = handle;
+            });
             // macOS skips parent() for the settings window, so tie its lifecycle
             // to the main window here instead. Other platforms keep parent().
             #[cfg(target_os = "macos")]
