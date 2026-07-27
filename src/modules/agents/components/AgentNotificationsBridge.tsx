@@ -87,7 +87,10 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       return;
     }
     case "finished": {
-      store.setStatus(leafId, "idle");
+      // Mark as "finished" (unread) rather than "idle" so the user can see the
+      // agent completed and click through. The view effect below clears
+      // finished -> idle once they actually look at the tab.
+      store.setStatus(leafId, "finished");
       const session = store.sessions[leafId];
       if (session) route(session, "finished", ctx);
       maybeTriggerManagedReview(leafId);
@@ -146,13 +149,27 @@ export function AgentNotificationsBridge({
           s.status === "working" &&
           now - s.lastActivityAt > WORKING_SILENCE_MS
         ) {
-          store.setStatus(s.leafId, "idle");
+          store.setStatus(s.leafId, "finished");
         }
       }
     };
     const id = window.setInterval(tick, 15_000);
     return () => window.clearInterval(id);
   }, []);
+
+  // View-through: when the user actually looks at a "finished" (unread) agent —
+  // its tab is active and the window is focused — clear it to "idle". This is
+  // the "click to acknowledge" step that separates "completed, unseen" from
+  // "completed, seen".
+  useEffect(() => {
+    if (!focused) return;
+    const store = useAgentStore.getState();
+    for (const s of Object.values(store.sessions)) {
+      if (s.status === "finished" && s.tabId === activeId) {
+        store.setStatus(s.leafId, "idle");
+      }
+    }
+  }, [focused, activeId]);
 
   return null;
 }
