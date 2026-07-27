@@ -2,6 +2,15 @@ import type { Tab } from "@/modules/tabs";
 import { hasLeaf, leafIdForPty } from "@/modules/terminal";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
+/**
+ * If an agent is "working" but goes silent for this long without a fresh
+ * signal, fall back to "idle". This covers the common case where Claude Code's
+ * hooks aren't installed (so no Stop/Notification markers ever arrive): without
+ * this, the agent would stay "working" forever. Receiving any working/attention
+ * signal resets the timer via lastActivityAt, so a genuinely long-running turn
+ * that keeps emitting signals stays "working".
+ */
+const WORKING_SILENCE_MS = 60_000;
 import { displayAgent } from "../lib/format";
 import { maybeTriggerManagedReview } from "../lib/review";
 import { routeAgentNotification } from "../lib/route";
@@ -119,6 +128,24 @@ export function AgentNotificationsBridge({
       alive = false;
       unlisten?.();
     };
+  }, []);
+
+  // Silence fallback: demote stale "working" sessions to "idle" so the UI
+  // doesn't read "working" forever when an agent's hooks aren't installed
+  // (no Stop marker ever arrives). Checking lastActivityAt against now lets a
+  // turn that keeps emitting signals stay working.
+  useEffect(() => {
+    const tick = () => {
+      const now = Date.now();
+      const store = useAgentStore.getState();
+      for (const s of Object.values(store.sessions)) {
+        if (s.status === "working" && now - s.lastActivityAt > WORKING_SILENCE_MS) {
+          store.setStatus(s.leafId, "idle");
+        }
+      }
+    };
+    const id = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(id);
   }, []);
 
   return null;
