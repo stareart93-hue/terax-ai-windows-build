@@ -29,6 +29,7 @@ import {
   tabAgentStatus,
   useAgentActivityStore,
 } from "@/modules/terminal";
+import { accentFor, useSpaces } from "@/modules/spaces";
 import {
   Cancel01Icon,
   CheckmarkCircle01Icon,
@@ -95,6 +96,15 @@ export function TabBar({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Look up the active tab's owning space so the sliding pill can carry that
+  // space's accent hue as a bottom border — giving the top tab bar a space
+  // identity cue it otherwise lacks.
+  const spaces = useSpaces((s) => s.spaces);
+  const activeTab = tabs.find((t) => t.id === activeId);
+  const activeSpace = activeTab
+    ? spaces.find((sp) => sp.id === activeTab.spaceId)
+    : undefined;
+  const activeAccent = activeSpace ? accentFor(activeSpace) : null;
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropGap, setDropGap] = useState<number | null>(null);
@@ -226,6 +236,11 @@ export function TabBar({
                         : "none",
                       transitionDuration: "var(--dur-base)",
                       transitionTimingFunction: "var(--ease-premium)",
+                      // Bottom accent stripe in the active space's hue, so the
+                      // top tab bar shows which space the active tab belongs to.
+                      boxShadow: activeAccent
+                        ? `inset 0 -2px 0 0 color-mix(in oklch, ${activeAccent} 70%, transparent)`
+                        : undefined,
                     }
                   : { opacity: 0 }
               }

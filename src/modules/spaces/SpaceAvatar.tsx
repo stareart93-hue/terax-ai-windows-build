@@ -18,13 +18,16 @@ type Props = {
 
 export function SpaceAvatar({ space, size = "sm", active, className }: Props) {
   const accent = accentFor(space);
+  // Always carry the space's hue so multiple inactive spaces stay
+  // distinguishable at a glance. Active is more saturated; inactive keeps the
+  // hue but desaturated so the sidebar isn't visually noisy.
   return (
     <span
       aria-hidden
       className={cn(
         "flex shrink-0 items-center justify-center font-semibold leading-none ring-1 ring-inset",
         SIZES[size],
-        active ? "ring-transparent" : "ring-border/50 text-muted-foreground",
+        active ? "ring-transparent" : "ring-border/50",
         className,
       )}
       style={
@@ -34,7 +37,10 @@ export function SpaceAvatar({ space, size = "sm", active, className }: Props) {
               backgroundColor: `color-mix(in oklch, ${accent} 16%, transparent)`,
               boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${accent} 35%, transparent)`,
             }
-          : undefined
+          : {
+              color: `color-mix(in oklch, ${accent} 55%, var(--muted-foreground))`,
+              backgroundColor: `color-mix(in oklch, ${accent} 8%, transparent)`,
+            }
       }
     >
       {spaceInitial(space.name)}

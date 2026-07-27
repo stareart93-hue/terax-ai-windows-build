@@ -25,6 +25,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useMemo, useState } from "react";
 import { InlineRename } from "./components/InlineRename";
 import { SpaceAvatar } from "./SpaceAvatar";
+import { accentFor } from "./lib/spaceColor";
 import type { SpaceMeta } from "./lib/store";
 import { useSpaces } from "./lib/useSpaces";
 
@@ -206,8 +207,12 @@ function SpaceSection({
   onJumpTab: (id: number) => void;
   onCloseTab: (id: number) => void;
 }) {
+  const accent = accentFor(space);
   return (
-    <section className="mb-2">
+    <section
+      className="mb-2"
+      style={{ borderLeft: `2px solid color-mix(in oklch, ${accent} 40%, transparent)` }}
+    >
       <div
         className={cn(
           "group flex items-center gap-2 rounded-md px-1.5 py-1.5",
@@ -257,7 +262,7 @@ function SpaceSection({
               className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             >
               <SpaceAvatar space={space} active={active} />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
                 {space.name}
               </span>
               <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
@@ -290,12 +295,19 @@ function SpaceSection({
         ) : null}
       </div>
       {!collapsed ? (
-        <div className="mt-0.5 flex flex-col gap-px pl-3">
+        <div
+          className="mt-0.5 flex flex-col gap-px pl-3"
+          style={{
+            borderLeft: `1px solid color-mix(in oklch, ${accent} 18%, transparent)`,
+            marginLeft: "6px",
+          }}
+        >
           {tabs.map((tab) => (
             <SpaceTabRow
               key={tab.id}
               tab={tab}
               active={tab.id === activeTabId}
+              accent={accent}
               claude={claudeStatusFor(phases, agents, tab)}
               onJump={() => onJumpTab(tab.id)}
               onClose={() => onCloseTab(tab.id)}
@@ -337,12 +349,16 @@ function SpaceAction({
 function SpaceTabRow({
   tab,
   active,
+  accent,
   claude,
   onJump,
   onClose,
 }: {
   tab: Tab;
   active: boolean;
+  /** The owning space's accent hue — tints the active tab so it reads as
+   *  belonging to that space, not as a generic gray highlight. */
+  accent: string;
   claude: ClaudePresence | null;
   onJump: () => void;
   onClose: () => void;
@@ -352,8 +368,13 @@ function SpaceTabRow({
     <div
       className={cn(
         "group/tab flex items-center gap-2 rounded-md px-2 py-1.5",
-        active ? "bg-foreground/[0.07]" : "hover:bg-accent/45",
+        !active && "hover:bg-accent/45",
       )}
+      style={
+        active
+          ? { backgroundColor: `color-mix(in oklch, ${accent} 13%, transparent)` }
+          : undefined
+      }
     >
       <button
         type="button"
@@ -362,7 +383,12 @@ function SpaceTabRow({
       >
         <SpaceTaskIcon tab={tab} claude={claude} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[11.5px] leading-tight text-foreground">
+          <span
+            className={cn(
+              "truncate text-[11.5px] leading-tight text-foreground",
+              active && "font-medium",
+            )}
+          >
             {labelFor(tab)}
           </span>
           <span className="flex min-w-0 items-center gap-1.5">
