@@ -61,7 +61,7 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
             ...prev,
             status,
             lastActivityAt: now,
-            attentionSince: status === "waiting" ? now : null,
+            attentionSince: status === "attention" ? now : null,
           },
         },
       };
@@ -105,9 +105,11 @@ export const useAgentStore = create<AgentStoreState>((set) => ({
 /** The tab/leaf of the agent that most recently entered the waiting state, for
  *  the keyboard jump-to-attention shortcut. Null when none is waiting. */
 export function nextAttentionTarget(): { tabId: number; leafId: number } | null {
-  const waiting = Object.values(useAgentStore.getState().sessions)
-    .filter((s) => s.status === "waiting")
+  // Jump-to-attention targets agents actively blocked on user input only —
+  // not agents that simply finished their turn (idle).
+  const needingInput = Object.values(useAgentStore.getState().sessions)
+    .filter((s) => s.status === "attention")
     .sort((a, b) => (b.attentionSince ?? 0) - (a.attentionSince ?? 0));
-  const t = waiting[0];
+  const t = needingInput[0];
   return t ? { tabId: t.tabId, leafId: t.leafId } : null;
 }

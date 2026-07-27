@@ -1,4 +1,15 @@
-export type AgentStatus = "working" | "waiting";
+/**
+ * Lifecycle state of a running agent (e.g. Claude Code in a terminal).
+ *
+ *   working    — executing (thinking / calling tools / streaming). From the
+ *                agent's "prompt submitted" signal.
+ *   idle       — finished its turn, waiting for the next instruction. From the
+ *                agent's "stop" signal. Does NOT need immediate user action.
+ *   attention  — blocked waiting for the user to answer (permission request,
+ *                clarification). From the agent's "notification" signal. This
+ *                is the state that should prompt the user to switch back.
+ */
+export type AgentStatus = "working" | "idle" | "attention";
 
 export type AgentSource = "terminal" | "local";
 

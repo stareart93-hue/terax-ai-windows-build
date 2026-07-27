@@ -19,7 +19,10 @@ function isBusy(s: RunStatus): boolean {
 }
 
 function liveStatus(s: RunStatus): AgentStatus | null {
-  if (s === "awaiting-approval") return "waiting";
+  // The local chat agent maps onto the same three-state surface as terminal
+  // agents. Awaiting approval is the "needs your input" state; thinking /
+  // streaming is "working"; idle/error are not surfaced as agent activity.
+  if (s === "awaiting-approval") return "attention";
   if (s === "thinking" || s === "streaming") return "working";
   return null;
 }

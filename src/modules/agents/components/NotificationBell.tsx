@@ -45,7 +45,17 @@ function StatusRow({
   status: AgentStatus;
   onClick: () => void;
 }) {
-  const waiting = status === "waiting";
+  // Three distinct visual states so the user can tell at a glance whether the
+  // agent is busy, done, or blocked on them.
+  //   working   — muted, busy
+  //   idle      — green, finished its turn (no immediate action needed)
+  //   attention — primary + pulsing, needs the user's input now
+  const meta =
+    status === "attention"
+      ? { dot: "bg-primary animate-pulse", label: "needs input", tone: "font-medium text-primary" }
+      : status === "idle"
+        ? { dot: "bg-emerald-500", label: "idle", tone: "text-emerald-600 dark:text-emerald-400" }
+        : { dot: "bg-muted-foreground/50", label: "working", tone: "text-muted-foreground" };
   return (
     <button
       type="button"
@@ -60,14 +70,9 @@ function StatusRow({
       <span className="flex-1 truncate text-sm text-foreground">
         {displayAgent(agent)}
       </span>
-      <span
-        className={cn(
-          "flex items-center gap-1.5 text-xs",
-          waiting ? "font-medium text-primary" : "text-muted-foreground",
-        )}
-      >
-        {waiting ? <span className="size-1.5 rounded-full bg-primary" /> : null}
-        {waiting ? "waiting" : "working"}
+      <span className={cn("flex items-center gap-1.5 text-xs", meta.tone)}>
+        <span className={cn("size-1.5 rounded-full", meta.dot)} />
+        {meta.label}
       </span>
     </button>
   );
@@ -185,15 +190,16 @@ export function NotificationBell({ onActivate, onActivateLocal }: Props) {
 
   const active = useMemo(() => Object.values(sessions), [sessions]);
   const activeCount = active.length + (localAgent ? 1 : 0);
-  const waitingCount =
-    active.filter((s) => s.status === "waiting").length +
-    (localAgent?.status === "waiting" ? 1 : 0);
-  // attention maps to an active waiting session, so only completed events add
-  // to the badge to avoid double-counting.
+  // The badge surfaces agents actively blocked on user input (attention), plus
+  // unread finished/error events. An agent that's merely idle (finished its
+  // turn) or working doesn't add to the badge — neither needs the user right now.
+  const attentionCount =
+    active.filter((s) => s.status === "attention").length +
+    (localAgent?.status === "attention" ? 1 : 0);
   const unreadDone = notifications.filter(
     (n) => !n.read && n.kind !== "attention",
   ).length;
-  const badge = waitingCount + unreadDone;
+  const badge = attentionCount + unreadDone;
   const enabledCount = HOOK_AGENTS.filter((id) => hooks[id] === true).length;
 
   const refreshHooks = () => {

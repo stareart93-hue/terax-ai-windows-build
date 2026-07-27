@@ -72,13 +72,13 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       store.setStatus(leafId, "working");
       return;
     case "attention": {
-      store.setStatus(leafId, "waiting");
+      store.setStatus(leafId, "attention");
       const session = store.sessions[leafId];
       if (session) route(session, "attention", ctx);
       return;
     }
     case "finished": {
-      store.setStatus(leafId, "waiting");
+      store.setStatus(leafId, "idle");
       const session = store.sessions[leafId];
       if (session) route(session, "finished", ctx);
       maybeTriggerManagedReview(leafId);
