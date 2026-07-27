@@ -89,7 +89,12 @@ export default function (pi: ExtensionAPI) {
 // emitted (legacy /dev/tty Claude, current TerminalSequence, Osc, Windows
 // helper). Used to prune our own groups before reinserting so installs are
 // idempotent and migrate older markers.
-const OWNED_MARKERS: [&str; 3] = ["notify;Terax;", "terax;notify", "__terax_notify"];
+const OWNED_MARKERS: [&str; 4] = [
+    "notify;Terax;",
+    "terax;notify",
+    "__terax_notify",
+    "__terax_seq",
+];
 
 fn find(agent: &str) -> Result<&'static AgentSpec, String> {
     AGENTS
@@ -100,11 +105,34 @@ fn find(agent: &str) -> Result<&'static AgentSpec, String> {
 
 fn hook_command(spec: &AgentSpec, event: &str) -> String {
     match spec.delivery {
-        Delivery::TerminalSequence => format!(
-            r#"[ -n "$TERAX_TERMINAL" ] && printf '{{"terminalSequence":"\\u001b]777;notify;Terax;{event}\\u0007"}}' || true"#
-        ),
+        // Claude Code reads `terminalSequence` from the hook's stdout JSON and
+        // writes the escape sequence into the PTY itself.
+        Delivery::TerminalSequence => terminal_sequence_command(event),
         Delivery::Osc => osc_command(spec.agent, event),
     }
+}
+
+/// Command that makes Claude Code emit our OSC 777 marker via its
+/// `terminalSequence` hook-output field.
+#[cfg(unix)]
+fn terminal_sequence_command(event: &str) -> String {
+    format!(
+        r#"[ -n "$TERAX_TERMINAL" ] && printf '{{"terminalSequence":"\\u001b]777;notify;Terax;{event}\\u0007"}}' || true"#
+    )
+}
+
+/// Windows: CC executes hook commands through cmd/PowerShell, where the bash
+/// `[ -n ] && printf` form above is invalid syntax and silently fails — so the
+/// marker never reaches the detector and the agent stays "working" forever.
+/// Delegate to the terax binary's `__terax_seq` subcommand instead, which
+/// checks TERAX_TERMINAL and prints the terminalSequence JSON to stdout. No
+/// shell quoting hazard, works in every Windows shell.
+#[cfg(windows)]
+fn terminal_sequence_command(event: &str) -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "terax.exe".to_string());
+    format!(r#""{exe}" __terax_seq {event}"#)
 }
 
 // Marker to the tty, then `{}` on stdout: Codex/Gemini require a JSON no-op.
@@ -127,7 +155,19 @@ fn osc_command(agent: &str, event: &str) -> String {
 // Kept in sync with hook_command so status reflects what enable writes.
 fn status_needle(spec: &AgentSpec, event: &str) -> String {
     match spec.delivery {
-        Delivery::TerminalSequence => format!("notify;Terax;{event}"),
+        Delivery::TerminalSequence => {
+            // On Unix the command string embeds the marker directly
+            // (`notify;Terax;<event>`); on Windows it delegates to
+            // `__terax_seq <event>`, which emits the marker at runtime.
+            #[cfg(unix)]
+            {
+                format!("notify;Terax;{event}")
+            }
+            #[cfg(windows)]
+            {
+                format!("__terax_seq {event}")
+            }
+        }
         Delivery::Osc => {
             #[cfg(unix)]
             {
@@ -400,11 +440,18 @@ mod tests {
         assert_eq!(hook_count(&out, "UserPromptSubmit"), 1);
         assert_eq!(hook_count(&out, "Notification"), 1);
         assert_eq!(hook_count(&out, "Stop"), 1);
-        assert!(command(&out, "Notification", 0).contains("notify;Terax;attention"));
-        assert!(command(&out, "Stop", 0).contains("notify;Terax;finished"));
-        assert!(command(&out, "UserPromptSubmit", 0).contains("notify;Terax;working"));
-        assert!(command(&out, "Stop", 0).contains("terminalSequence"));
-        assert!(!command(&out, "Stop", 0).contains("/dev/tty"));
+        // The status needle is the stable proof of installation; it differs
+        // per platform (Unix embeds the marker in the command; Windows
+        // delegates to __terax_seq which emits it at runtime).
+        let c = command(&out, "Stop", 0);
+        assert!(c.contains(&status_needle(spec("claude"), "finished")));
+        assert!(!c.contains("/dev/tty"));
+        // On Unix the command carries the terminalSequence JSON inline; on
+        // Windows it delegates to the terax binary.
+        #[cfg(unix)]
+        assert!(c.contains("terminalSequence"));
+        #[cfg(windows)]
+        assert!(c.contains("__terax_seq"));
     }
 
     #[test]
@@ -526,8 +573,29 @@ mod tests {
         });
         let out = merge_hooks(legacy, spec("claude"));
         assert_eq!(hook_count(&out, "Notification"), 1);
-        assert!(command(&out, "Notification", 0).contains("terminalSequence"));
+        // Legacy /dev/tty form is replaced by the current delivery command.
         assert!(!command(&out, "Notification", 0).contains("/dev/tty"));
+        assert!(command(&out, "Notification", 0).contains(&status_needle(spec("claude"), "attention")));
+    }
+
+    #[test]
+    fn migrates_legacy_bash_terminal_sequence_hook() {
+        // The exact bash command prior Windows support: valid on Unix, but a
+        // syntax error in cmd/PowerShell. Reinstalling must replace it with the
+        // current platform command (no stale duplicate left behind).
+        let legacy = json!({
+            "hooks": {
+                "Stop": [
+                    { "hooks": [ {
+                        "type": "command",
+                        "command": "[ -n \"$TERAX_TERMINAL\" ] && printf '{\"terminalSequence\":\"\\u001b]777;notify;Terax;finished\\u0007\"}' || true"
+                    } ] }
+                ]
+            }
+        });
+        let out = merge_hooks(legacy, spec("claude"));
+        assert_eq!(hook_count(&out, "Stop"), 1);
+        assert!(command(&out, "Stop", 0).contains(&status_needle(spec("claude"), "finished")));
     }
 
     #[test]
@@ -564,7 +632,7 @@ mod tests {
         });
         let out = merge_hooks(input, spec("claude"));
         assert_eq!(hook_count(&out, "Notification"), 1);
-        assert!(command(&out, "Notification", 0).contains("notify;Terax;attention"));
+        assert!(command(&out, "Notification", 0).contains(&status_needle(spec("claude"), "attention")));
     }
 
     #[test]

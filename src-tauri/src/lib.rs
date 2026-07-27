@@ -175,6 +175,31 @@ pub fn run() {
         }
     }
 
+    // Cross-platform: emit a terminalSequence JSON on stdout for Claude Code's
+    // hook contract. Used by the Windows hook command (CC on Windows can't run
+    // the bash `[ -n ... ] && printf` form). On Unix we keep the inline bash
+    // command, but this entry point works everywhere if invoked.
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.get(1).map(String::as_str) == Some("__terax_seq") {
+            if std::env::var_os("TERAX_TERMINAL").is_some() {
+                if let Some(event) = args.get(2) {
+                    // CC reads `terminalSequence` from hook stdout and writes
+                    // the escape sequence into the PTY itself.
+                    let json = format!(
+                        "{{\"terminalSequence\":\"\\u001b]777;notify;Terax;{}\\u0007\"}}",
+                        event
+                    );
+                    use std::io::Write;
+                    let mut out = std::io::stdout();
+                    let _ = out.write_all(json.as_bytes());
+                    let _ = out.flush();
+                }
+            }
+            std::process::exit(0);
+        }
+    }
+
     let launch = parse_launch_target();
     let cli_dir = launch.dir.clone();
     workspace::init_launch_cwd(cli_dir.as_deref());
