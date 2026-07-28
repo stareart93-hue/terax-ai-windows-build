@@ -75,7 +75,7 @@ type SourceControlSummaryState = {
   mergeState: { rebaseInProgress: boolean; mergeInProgress: boolean };
 };
 
-function normalizeError(error: unknown): string {
+export function normalizeError(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object" && "message" in error) {
     const message = (error as { message?: unknown }).message;
@@ -84,7 +84,7 @@ function normalizeError(error: unknown): string {
   return "Unknown source control error";
 }
 
-function getContextualAction(
+export function getContextualAction(
   status: GitStatusSnapshot | null,
 ): SourceControlRemoteAction | null {
   if (!status?.upstream) return null;

@@ -55,6 +55,7 @@ export type CommandPaletteActionContext = {
   askAiSelection: () => void;
   openSettings: () => void;
   openKeyboardShortcuts: () => void;
+  openAgentActivity: () => void;
   spaces: { id: string; name: string }[];
   activeSpaceId: string | null;
   openSpacesOverview: () => void;
@@ -290,6 +291,14 @@ export function createCommandItems(
       icon: SparklesIcon,
       shortcutId: "ai.askSelection",
       run: ctx.askAiSelection,
+    },
+    {
+      id: "ai.agentActivity",
+      title: "View agent activity",
+      group: "AI",
+      keywords: ["debug", "status", "claude", "terminal", "log", "event"],
+      icon: DashboardSquare01Icon,
+      run: ctx.openAgentActivity,
     },
   ];
 }

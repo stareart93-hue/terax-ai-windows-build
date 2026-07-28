@@ -92,6 +92,7 @@ import {
   writeToSession,
 } from "@/modules/terminal";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
+import { AgentActivityDialog } from "@/modules/agents/components/AgentActivityDialog";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore, type WorkspaceEnv } from "@/modules/workspace";
 import { listen } from "@tauri-apps/api/event";
@@ -282,6 +283,7 @@ export default function App() {
 
   const [newEditorOpen, setNewEditorOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [agentActivityOpen, setAgentActivityOpen] = useState(false);
   const [paletteInitialMode, setPaletteInitialMode] = useState<
     "commands" | "content"
   >("commands");
@@ -1094,6 +1096,7 @@ export default function App() {
             askAiSelection: askFromSelection,
             openSettings: () => void openSettingsWindow(),
             openKeyboardShortcuts: () => void openSettingsWindow("shortcuts"),
+            openAgentActivity: () => setAgentActivityOpen(true),
             spaces: useSpaces.getState().spaces,
             activeSpaceId,
             openSpacesOverview: focusSpacesPanel,
@@ -1381,6 +1384,11 @@ export default function App() {
           />
 
           <UpdaterDialog />
+
+          <AgentActivityDialog
+            open={agentActivityOpen}
+            onOpenChange={setAgentActivityOpen}
+          />
 
           <CloseDialogs
             tabs={tabs}
