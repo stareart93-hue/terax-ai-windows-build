@@ -38,6 +38,11 @@ const AGENTS: &[AgentSpec] = &[
             ("PostToolUse", "working"),
             ("Notification", "attention"),
             ("Stop", "finished"),
+            // SessionStart fires on /clear (source: "clear"), initial launch,
+            // and session resume. Mapping it to "idle" resets state to
+            // awaiting-input after a /clear — otherwise a finished/attention
+            // state would linger over a freshly cleared conversation.
+            ("SessionStart", "idle"),
         ],
         matcher: false,
         delivery: Delivery::TerminalSequence,

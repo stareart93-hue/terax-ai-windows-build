@@ -21,6 +21,7 @@ export type AgentSignalKind =
   | "working"
   | "attention"
   | "finished"
+  | "idle"
   | "exited";
 
 export type AgentSignal = {

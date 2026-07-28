@@ -145,6 +145,19 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       maybeTriggerManagedReview(leafId);
       return;
     }
+    case "idle": {
+      // SessionStart (e.g. /clear, resume): reset to idle (awaiting input,
+      // viewed). Cancel any pending attention — a cleared session isn't blocked.
+      {
+        const t = pendingAttention.get(leafId);
+        if (t !== undefined) {
+          clearTimeout(t);
+          pendingAttention.delete(leafId);
+        }
+      }
+      store.setStatus(leafId, "idle");
+      return;
+    }
     case "exited":
       {
         const t = pendingAttention.get(leafId);

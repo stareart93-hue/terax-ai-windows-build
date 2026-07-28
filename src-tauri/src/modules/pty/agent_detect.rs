@@ -40,6 +40,8 @@ pub enum Transition {
     Working,
     Attention,
     Finished,
+    /// Session reset / cleared — the agent is back to awaiting input, viewed.
+    Idle,
     Exited,
 }
 
@@ -71,6 +73,11 @@ impl Transition {
             Transition::Finished => AgentSignal {
                 id,
                 kind: "finished",
+                agent: None,
+            },
+            Transition::Idle => AgentSignal {
+                id,
+                kind: "idle",
                 agent: None,
             },
             Transition::Exited => AgentSignal {
@@ -230,6 +237,13 @@ impl AgentDetector {
                     self.ensure_armed(agent, emit);
                     self.status = Status::Waiting;
                     emit(Transition::Finished);
+                }
+                b"idle" => {
+                    // SessionStart (e.g. /clear, resume): reset to awaiting
+                    // input, viewed — not "finished/unread".
+                    self.ensure_armed(agent, emit);
+                    self.status = Status::Waiting;
+                    emit(Transition::Idle);
                 }
                 _ => {}
             }
@@ -610,5 +624,25 @@ mod tests {
         );
         // A second working while already working is deduped (no flap).
         assert!(run(&mut d, &osc("777;notify;Terax;working")).is_empty());
+    }
+
+    #[test]
+    fn idle_signal_resets_from_finished_and_attention() {
+        // SessionStart (e.g. /clear) emits "idle", which resets a finished or
+        // attention state back to idle (awaiting input, viewed).
+        let mut d = AgentDetector::new();
+        run(&mut d, &osc("133;C;claude"));
+        // finished -> idle
+        run(&mut d, &osc("777;notify;Terax;finished"));
+        assert_eq!(
+            run(&mut d, &osc("777;notify;Terax;idle")),
+            vec![Transition::Idle]
+        );
+        // attention -> idle
+        run(&mut d, &osc("777;notify;Terax;attention"));
+        assert_eq!(
+            run(&mut d, &osc("777;notify;Terax;idle")),
+            vec![Transition::Idle]
+        );
     }
 }
