@@ -112,8 +112,12 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
         pendingAttention.delete(leafId);
         const s = useAgentStore.getState().sessions[leafId];
         if (!s) return;
-        // Only apply if the agent hasn't since moved to working/finished.
-        if (s.status === "working") return;
+        // Don't clobber a state that supersedes this stale attention signal:
+        //  - working: the agent resumed (user already answered).
+        //  - finished: the turn completed — a late Notification must not
+        //    resurrect "attention" over a completed turn the user hasn't
+        //    acknowledged yet.
+        if (s.status === "working" || s.status === "finished") return;
         useAgentStore.getState().setStatus(leafId, "attention");
         const session = useAgentStore.getState().sessions[leafId];
         if (session) route(session, "attention", ctx);
@@ -122,9 +126,19 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       return;
     }
     case "finished": {
+      // The turn completed — cancel any pending attention (a late Notification
+      // must not resurrect attention over a finished turn).
+      {
+        const t = pendingAttention.get(leafId);
+        if (t !== undefined) {
+          clearTimeout(t);
+          pendingAttention.delete(leafId);
+        }
+      }
       // Mark as "finished" (unread) rather than "idle" so the user can see the
       // agent completed and click through. The view effect below clears
-      // finished -> idle once they actually look at the tab.
+      // finished -> idle once they actually look at the tab. Nothing else may
+      // auto-change it — it stays "finished" until the user views it.
       store.setStatus(leafId, "finished");
       const session = store.sessions[leafId];
       if (session) route(session, "finished", ctx);
