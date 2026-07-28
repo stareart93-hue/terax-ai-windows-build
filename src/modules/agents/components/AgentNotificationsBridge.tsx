@@ -11,6 +11,16 @@ import { useEffect, useRef } from "react";
  * that keeps emitting signals stays "working".
  */
 const WORKING_SILENCE_MS = 60_000;
+
+/**
+ * Attention signals are debounced: when one arrives we wait this long before
+ * applying it. If a "working" signal (PreToolUse/UserPromptSubmit) arrives in
+ * that window — meaning the user already answered and the agent resumed — the
+ * pending attention is cancelled. This prevents the "stuck on attention while
+ * working" symptom caused by a Notification arriving just before/as the agent
+ * resumes execution.
+ */
+const ATTENTION_DEBOUNCE_MS = 800;
 import { displayAgent } from "../lib/format";
 import { maybeTriggerManagedReview } from "../lib/review";
 import { routeAgentNotification } from "../lib/route";
@@ -65,6 +75,10 @@ function route(
   });
 }
 
+// Per-leaf pending attention timers. A Notification (attention) doesn't apply
+// immediately — see ATTENTION_DEBOUNCE_MS. Cancelled by an incoming working signal.
+const pendingAttention = new Map<number, ReturnType<typeof setTimeout>>();
+
 function handleSignal(sig: AgentSignal, ctx: Ctx): void {
   const leafId = leafIdForPty(sig.id);
   if (leafId === null) return;
@@ -78,12 +92,33 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       return;
     }
     case "working":
+      // A working signal means the agent resumed — cancel any pending attention
+      // (the user already answered; the Notification was stale/residual).
+      {
+        const t = pendingAttention.get(leafId);
+        if (t !== undefined) {
+          clearTimeout(t);
+          pendingAttention.delete(leafId);
+        }
+      }
       store.setStatus(leafId, "working");
       return;
     case "attention": {
-      store.setStatus(leafId, "attention");
-      const session = store.sessions[leafId];
-      if (session) route(session, "attention", ctx);
+      // Debounce: delay applying attention. If a working signal arrives first
+      // (agent resumed after the user answered), the attention is cancelled.
+      const existing = pendingAttention.get(leafId);
+      if (existing !== undefined) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        pendingAttention.delete(leafId);
+        const s = useAgentStore.getState().sessions[leafId];
+        if (!s) return;
+        // Only apply if the agent hasn't since moved to working/finished.
+        if (s.status === "working") return;
+        useAgentStore.getState().setStatus(leafId, "attention");
+        const session = useAgentStore.getState().sessions[leafId];
+        if (session) route(session, "attention", ctx);
+      }, ATTENTION_DEBOUNCE_MS);
+      pendingAttention.set(leafId, timer);
       return;
     }
     case "finished": {
@@ -97,6 +132,13 @@ function handleSignal(sig: AgentSignal, ctx: Ctx): void {
       return;
     }
     case "exited":
+      {
+        const t = pendingAttention.get(leafId);
+        if (t !== undefined) {
+          clearTimeout(t);
+          pendingAttention.delete(leafId);
+        }
+      }
       store.finish(leafId);
       useManagedAgentsStore.getState().remove(leafId);
       return;
