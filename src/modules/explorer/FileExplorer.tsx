@@ -12,6 +12,7 @@ import {
   FolderAddIcon,
   Refresh01Icon,
   Search01Icon,
+  SourceCodeIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -40,7 +41,8 @@ import { useExplorerDnd } from "./lib/useExplorerDnd";
 import { useExplorerFileDrop } from "./lib/useExplorerFileDrop";
 import { useFileTree } from "./lib/useFileTree";
 import { useGitStatus } from "./lib/useGitStatus";
-import type { GitStatusCode } from "./lib/gitStatusUtils";
+import { statusCodeForFile, type GitStatusCode } from "./lib/gitStatusUtils";
+import { explorerGitTextClass } from "./lib/gitStatusColor";
 import { useGlobalShortcuts } from "@/modules/shortcuts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { GitStatusSnapshot } from "@/modules/ai/lib/native";
@@ -98,6 +100,49 @@ function basename(path: string): string {
 function parentOf(path: string, fallback: string): string {
   const i = path.lastIndexOf("/");
   return i > 0 ? path.slice(0, i) : fallback;
+}
+
+// Sort priority for changed files: untracked > modified > added > renamed > deleted.
+const CHANGE_PRIORITY: Record<GitStatusCode, number> = {
+  U: 5,
+  M: 4,
+  A: 3,
+  R: 2,
+  D: 1,
+};
+
+/** Build a flat row list from the git snapshot's changed files (review view). */
+function buildChangeRows(
+  status: GitStatusSnapshot,
+): { rows: Row[]; entryIndexByPath: Map<string, number> } {
+  const rows: Row[] = [];
+  const entryIndexByPath = new Map<string, number>();
+  const repoRoot = status.repoRoot.replace(/\\/g, "/");
+  const files = [...status.changedFiles]
+    .map((f) => ({
+      file: f,
+      code: statusCodeForFile(f),
+      abs: `${repoRoot}/${f.path.replace(/\\/g, "/")}`,
+    }))
+    .sort(
+      (a, b) => CHANGE_PRIORITY[b.code] - CHANGE_PRIORITY[a.code] ||
+        a.file.path.localeCompare(b.file.path),
+    );
+  for (const { file, code, abs } of files) {
+    entryIndexByPath.set(abs, rows.length);
+    rows.push({
+      kind: "entry",
+      key: abs,
+      path: abs,
+      name: file.path,
+      isDir: false,
+      isExpanded: false,
+      depth: 0,
+      gitignored: false,
+      gitStatusCode: code,
+    });
+  }
+  return { rows, entryIndexByPath };
 }
 
 function buildRows(
@@ -180,6 +225,70 @@ function buildRows(
   return { rows, entryIndexByPath };
 }
 
+/** Changes-only review list: flat, colored by git status, click to open. */
+function ChangesList({
+  rows,
+  onOpenFile,
+  gitStatus,
+}: {
+  rows: Row[];
+  onOpenFile: (path: string, pin?: boolean) => void;
+  gitStatus?: GitStatusSnapshot | null;
+}) {
+  if (!gitStatus || gitStatus.changedFiles.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-[11px] text-muted-foreground">
+        {gitStatus ? "No changes in this repo." : "Not a git repository."}
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
+      {rows.map((row) => {
+        if (row.kind !== "entry") return null;
+        return (
+          <button
+            key={row.key}
+            type="button"
+            data-fs-path={row.path}
+            onClick={() => onOpenFile(row.path, true)}
+            className="flex h-6 w-full items-center gap-2 px-2 text-left transition-colors hover:bg-accent/40"
+            title={row.path}
+          >
+            <img
+              src={fileIconUrl(basename(row.name))}
+              alt=""
+              height={15}
+              width={15}
+              className="shrink-0"
+            />
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-[12px] leading-tight",
+                row.gitStatusCode
+                  ? explorerGitTextClass(row.gitStatusCode)
+                  : "text-foreground",
+              )}
+            >
+              {row.name}
+            </span>
+            {row.gitStatusCode ? (
+              <span
+                className={cn(
+                  "shrink-0 text-[9px] font-bold uppercase",
+                  explorerGitTextClass(row.gitStatusCode),
+                )}
+              >
+                {row.gitStatusCode}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export const FileExplorer = memo(
   forwardRef<FileExplorerHandle, Props>(function FileExplorer(
     {
@@ -204,12 +313,20 @@ export const FileExplorer = memo(
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [isSearchActive, setIsSearchActive] = useState(false);
+    const [viewMode, setViewMode] = useState<"tree" | "changes">("tree");
     const searchRef = useRef<ExplorerSearchHandle>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const { rows, entryIndexByPath } = useMemo(() => {
       if (!rootPath) return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
+      // Changes view: flat list of git-changed files from the (now live) snapshot.
+      if (viewMode === "changes" && gitStatus) {
+        return buildChangeRows(gitStatus);
+      }
+      if (viewMode === "changes") {
+        return { rows: [] as Row[], entryIndexByPath: new Map<string, number>() };
+      }
       return buildRows(rootPath, tree, lookupGitStatus);
       // `tree` is intentionally omitted: its identity changes every render, but
       // the listed fields are the only inputs buildRows actually reads.
@@ -221,6 +338,8 @@ export const FileExplorer = memo(
       tree.renaming,
       tree.pendingCreate,
       lookupGitStatus,
+      viewMode,
+      gitStatus,
     ]);
 
     const rowActions = useMemo<RowActions>(
@@ -508,6 +627,25 @@ export const FileExplorer = memo(
           <Button
             variant="ghost"
             size="icon"
+            className={cn(
+              "relative size-6 text-muted-foreground hover:text-foreground",
+              viewMode === "changes" && "text-primary hover:text-primary",
+            )}
+            onClick={() => setViewMode((v) => (v === "changes" ? "tree" : "changes"))}
+            title={viewMode === "changes" ? "Show file tree" : "Show changed files"}
+            aria-label={viewMode === "changes" ? "Show file tree" : "Show changed files"}
+          >
+            <HugeiconsIcon icon={SourceCodeIcon} size={13} strokeWidth={2} />
+            {viewMode === "tree" && gitStatus && gitStatus.changedFiles.length > 0 ? (
+              <span className="absolute -right-0 -top-0 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold leading-3 text-primary-foreground">
+                {gitStatus.changedFiles.length > 99 ? "99+" : gitStatus.changedFiles.length}
+              </span>
+            ) : null}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
             className="size-6 text-muted-foreground hover:text-foreground"
             onClick={() => setIsSearchOpen((v) => !v)}
             title="Search files"
@@ -556,7 +694,15 @@ export const FileExplorer = memo(
           onAttachToAgent={onAttachToAgent}
         />
 
-        {!isSearchActive ? (
+        {viewMode === "changes" && !isSearchActive ? (
+          <ChangesList
+            rows={rows}
+            onOpenFile={onOpenFile}
+            gitStatus={gitStatus}
+          />
+        ) : null}
+
+        {!isSearchActive && viewMode === "tree" ? (
           <ContextMenu
             onOpenChange={(open) => {
               if (!open) setDeleteConfirm(false);

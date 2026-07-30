@@ -343,10 +343,17 @@ export default function App() {
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
+  const activeTerminalLeafCwdEarly =
+    activeTab?.kind === "terminal"
+      ? (findLeafCwd(activeTab.paneTree, activeTab.activeLeafId) ??
+        activeTab.cwd ??
+        null)
+      : null;
   const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
     activeTab,
     tabs,
     launchCwd ?? home,
+    activeTerminalLeafCwdEarly,
   );
 
   useWindowTitle(activeTab, explorerRoot);

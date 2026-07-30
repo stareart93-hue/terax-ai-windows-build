@@ -3,7 +3,9 @@ import {
   type GitRepoInfo,
   type GitStatusSnapshot,
 } from "@/modules/ai/lib/native";
+import { listenFsChanged } from "@/modules/explorer/lib/watch";
 import { useWorkspaceEnvStore, workspaceScopeKey } from "@/modules/workspace";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AUTO_FETCH_THROTTLE_MS = 5 * 60_000;
@@ -497,6 +499,70 @@ export function useSourceControl(
     window.addEventListener("focus", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [refresh, enabled]);
+
+  // Live refresh on agent activity: when Claude Code (or another terminal
+  // agent) finishes a turn or resets (/clear), it likely changed files on disk
+  // — refresh so the explorer/source-control reflect the new state without the
+  // user having to refocus the window. Debounced + throttled like the focus
+  // listener so a fast multi-turn run doesn't hammer git.
+  useEffect(() => {
+    if (!enabled) return;
+    let timer = 0;
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    void listen<{ kind: string }>("terax:agent-signal", (e) => {
+      const kind = e.payload.kind;
+      // Only refresh on turn-ending / reset signals, not on every working tick.
+      if (kind !== "finished" && kind !== "idle" && kind !== "exited") return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = 0;
+        const elapsed = Date.now() - lastRefreshAtRef.current;
+        if (elapsed < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+        void refresh({ remote: "never" });
+      }, 400);
+    })
+      .then((u) => {
+        if (alive) unlisten = u;
+        else u();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [refresh, enabled]);
+
+  // Live refresh on filesystem changes (e.g. an agent's tool call editing a
+  // file mid-turn). The notify watcher is NonRecursive and add-driven, so this
+  // catches edits in explorer-expanded / editor-open dirs; the agent-finished
+  // listener above is the primary driver. Debounced to coalesce bursts.
+  useEffect(() => {
+    if (!enabled) return;
+    let timer = 0;
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    void listenFsChanged(() => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = 0;
+        const elapsed = Date.now() - lastRefreshAtRef.current;
+        if (elapsed < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+        void refresh({ remote: "never" });
+      }, 500);
+    })
+      .then((u) => {
+        if (alive) unlisten = u;
+        else u();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
       if (timer) window.clearTimeout(timer);
     };
   }, [refresh, enabled]);
