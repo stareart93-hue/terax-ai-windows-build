@@ -506,8 +506,10 @@ export function useSourceControl(
   // Live refresh on agent activity: when Claude Code (or another terminal
   // agent) finishes a turn or resets (/clear), it likely changed files on disk
   // — refresh so the explorer/source-control reflect the new state without the
-  // user having to refocus the window. Debounced + throttled like the focus
-  // listener so a fast multi-turn run doesn't hammer git.
+  // user having to refocus the window. Uses a shorter throttle than focus
+  // (agent turns are meaningful state-change moments, not incidental focus
+  // gains), and forces past the sameRepo+TTL guard so a branch switch within
+  // the same repo is not skipped.
   useEffect(() => {
     if (!enabled) return;
     let timer = 0;
@@ -520,8 +522,10 @@ export function useSourceControl(
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = 0;
-        const elapsed = Date.now() - lastRefreshAtRef.current;
-        if (elapsed < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+        // Force-refresh: update lastRefreshAtRef so doRefresh isn't skipped by
+        // the context-change TTL guard, then fetch. Agent turns are explicit
+        // "something may have changed" signals.
+        lastRefreshAtRef.current = 0;
         void refresh({ remote: "never" });
       }, 400);
     })
@@ -550,8 +554,9 @@ export function useSourceControl(
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = 0;
-        const elapsed = Date.now() - lastRefreshAtRef.current;
-        if (elapsed < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+        // Force past the TTL guard — a file change is concrete evidence the
+        // working tree moved, not a speculative refresh.
+        lastRefreshAtRef.current = 0;
         void refresh({ remote: "never" });
       }, 500);
     })

@@ -572,6 +572,17 @@ export function useSourceControlPanel(
     await summary.refresh({ remote: "never" });
   }, [isOpen, summary]);
 
+  // Force-refresh whenever the panel is opened (or reopened). This guarantees
+  // the user sees the current branch/state — e.g. after Claude Code switched
+  // branches via git checkout while the panel was hidden.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (summary.repo) invalidateRepoDiffs(summary.repo.repoRoot);
+    void summary.refresh({ remote: "never" });
+    // Only on open transitions; summary identity is stable between renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) {
       setPanelState("closed");
