@@ -92,6 +92,7 @@ import {
   writeToSession,
 } from "@/modules/terminal";
 import { ThemeProvider, useThemeFileEditing } from "@/modules/theme";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { AgentActivityDialog } from "@/modules/agents/components/AgentActivityDialog";
 import { UpdaterDialog } from "@/modules/updater";
 import { useWorkspaceEnvStore, type WorkspaceEnv } from "@/modules/workspace";
@@ -1289,28 +1290,32 @@ export default function App() {
                     className="min-h-0 flex-1 terax-panel-in"
                   >
                     {sidebarView === "explorer" ? (
-                      <FileExplorer
-                        ref={explorerRef}
-                        rootPath={explorerRoot}
-                        gitStatus={
-                          explorerGitDecorations ? sourceControl.status : null
-                        }
-                        activeFilePath={explorerActiveFilePath}
-                        onOpenFile={handleOpenFile}
-                        onPathRenamed={handlePathRenamed}
-                        onPathDeleted={handlePathDeleted}
-                        onRevealInTerminal={cdInNewTab}
-                        onAttachToAgent={handleAttachFileToAgent}
-                      />
+                      <ErrorBoundary name="explorer">
+                        <FileExplorer
+                          ref={explorerRef}
+                          rootPath={explorerRoot}
+                          gitStatus={
+                            explorerGitDecorations ? sourceControl.status : null
+                          }
+                          activeFilePath={explorerActiveFilePath}
+                          onOpenFile={handleOpenFile}
+                          onPathRenamed={handlePathRenamed}
+                          onPathDeleted={handlePathDeleted}
+                          onRevealInTerminal={cdInNewTab}
+                          onAttachToAgent={handleAttachFileToAgent}
+                        />
+                      </ErrorBoundary>
                     ) : (
-                      <SourceControlPanel
-                        open
-                        sourceControl={sourceControl}
-                        onOpenDiff={openGitDiffTab}
-                        onOpenGitGraph={openGitGraphFromContext}
-                        onOpenFile={handleOpenFile}
-                        onNavigateToPath={cdInNewTab}
-                      />
+                      <ErrorBoundary name="source-control">
+                        <SourceControlPanel
+                          open
+                          sourceControl={sourceControl}
+                          onOpenDiff={openGitDiffTab}
+                          onOpenGitGraph={openGitGraphFromContext}
+                          onOpenFile={handleOpenFile}
+                          onNavigateToPath={cdInNewTab}
+                        />
+                      </ErrorBoundary>
                     )}
                   </div>
                   <SidebarRail

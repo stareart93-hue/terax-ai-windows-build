@@ -1,4 +1,5 @@
 import type { ComponentProps } from "react";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { AiDiffStack, EditorStack, GitDiffStack } from "@/modules/editor";
 import { GitHistoryStack } from "@/modules/git-history";
@@ -77,15 +78,17 @@ export function WorkspaceSurface({
         )}
         aria-hidden={!isTerminalTab}
       >
-        <TerminalStack
-          tabs={tabs}
-          activeId={activeId}
-          registerHandle={registerTerminalHandle}
-          onSearchReady={onSearchReady}
-          onCwd={onCwd}
-          onExit={onExit}
-          onFocusLeaf={onFocusLeaf}
-        />
+        <ErrorBoundary name="terminal">
+          <TerminalStack
+            tabs={tabs}
+            activeId={activeId}
+            registerHandle={registerTerminalHandle}
+            onSearchReady={onSearchReady}
+            onCwd={onCwd}
+            onExit={onExit}
+            onFocusLeaf={onFocusLeaf}
+          />
+        </ErrorBoundary>
       </div>
       <div
         className={cn(
@@ -94,14 +97,16 @@ export function WorkspaceSurface({
         )}
         aria-hidden={!isEditorTab}
       >
-        <EditorStack
-          tabs={tabs}
-          activeId={activeId}
-          registerHandle={registerEditorHandle}
-          onDirtyChange={onEditorDirtyChange}
-          onCloseTab={onEditorCloseTab}
-          onSetMarkdownView={onSetMarkdownView}
-        />
+        <ErrorBoundary name="editor">
+          <EditorStack
+            tabs={tabs}
+            activeId={activeId}
+            registerHandle={registerEditorHandle}
+            onDirtyChange={onEditorDirtyChange}
+            onCloseTab={onEditorCloseTab}
+            onSetMarkdownView={onSetMarkdownView}
+          />
+        </ErrorBoundary>
       </div>
       <div
         className={cn(
@@ -137,12 +142,14 @@ export function WorkspaceSurface({
         )}
         aria-hidden={!isAiDiffTab}
       >
-        <AiDiffStack
-          tabs={tabs}
-          activeId={activeId}
-          onAccept={onAiDiffAccept}
-          onReject={onAiDiffReject}
-        />
+        <ErrorBoundary name="ai-diff">
+          <AiDiffStack
+            tabs={tabs}
+            activeId={activeId}
+            onAccept={onAiDiffAccept}
+            onReject={onAiDiffReject}
+          />
+        </ErrorBoundary>
       </div>
       <div
         className={cn(

@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { useManagedAgentsStore } from "@/modules/agents/store/managedAgentsStore";
 import { writeToSession } from "@/modules/terminal";
+import { claudeTuiNeedsUserChoice } from "../lib/useAiLiveBridge";
 import type { ToolContext } from "./context";
 
 // Claude Code's TUI treats a trailing CR in the same write chunk as the text
@@ -82,6 +83,16 @@ export function buildManagedAgentTools(ctx: ToolContext) {
         if (!oneLine) return { error: "empty instruction" };
         if (hasControlChars(oneLine)) {
           return { error: "instruction contains control characters" };
+        }
+        // Guard: if CC is currently showing a permission/trust/choice prompt,
+        // injecting text + Enter could be misread as an answer (e.g. silently
+        // approving a permission). Abort and let the model know it's blocked.
+        const buf = ctx.readAgentOutput(managed.leafId) ?? "";
+        if (claudeTuiNeedsUserChoice(buf)) {
+          return {
+            error:
+              "Claude Code is showing a permission or choice prompt. Resolve it in the terminal before sending the next instruction.",
+          };
         }
         if (!writeToSession(managed.leafId, oneLine)) {
           store.remove(managed.leafId);
