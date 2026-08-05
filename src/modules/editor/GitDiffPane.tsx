@@ -13,6 +13,7 @@ import {
   getCachedDiff,
   workingDiffKey,
 } from "./lib/diffCache";
+import { DIFF_SCAN_LIMIT, normalizeForDiff } from "./lib/diffNormalize";
 import {
   buildSharedExtensions,
   DEFAULT_INDENT,
@@ -217,12 +218,13 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
       languageCompartment.of(langExt ?? []),
       ...READONLY_EXT,
       unifiedMergeView({
-        original: originalContent,
+        original: normalizeForDiff(originalContent),
         mergeControls: false,
         highlightChanges: true,
         gutter: true,
         syntaxHighlightDeletions: true,
         collapseUnchanged: { margin: 3, minSize: 6 },
+        diffConfig: { scanLimit: DIFF_SCAN_LIMIT },
       }),
       DIFF_THEME,
     ],
@@ -311,7 +313,7 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
         ) : (
           <CodeMirror
             ref={cmRef}
-            value={modifiedContent}
+            value={normalizeForDiff(modifiedContent)}
             theme={themeExt}
             extensions={extensions}
             editable={false}

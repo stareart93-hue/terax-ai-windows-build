@@ -13,6 +13,7 @@ import {
   DEFAULT_INDENT,
   languageCompartment,
 } from "./lib/extensions";
+import { DIFF_SCAN_LIMIT, normalizeForDiff } from "./lib/diffNormalize";
 import { resolveLanguage, resolveLanguageSync } from "./lib/languageResolver";
 import { useEditorThemeExt } from "./lib/useEditorThemeExt";
 import {
@@ -124,12 +125,18 @@ export function AiDiffPane({
     };
   }, [path, lang]);
 
+  // Normalize line endings once so the diff engine, hunk computation, and
+  // preview all see consistent \n endings — CRLF mismatch between the original
+  // blob and the proposed content makes every line appear changed.
+  const origNorm = useMemo(() => normalizeForDiff(originalContent), [originalContent]);
+  const propNorm = useMemo(() => normalizeForDiff(proposedContent), [proposedContent]);
+
   // Per-hunk review state. One entry per changed chunk; defaults to "pending"
   // which the synthesizer treats as "keep" (matches the prior whole-file
   // Accept semantics). Reset whenever the proposed content changes.
   const hunks = useMemo(
-    () => computeHunks(originalContent, proposedContent),
-    [originalContent, proposedContent],
+    () => computeHunks(origNorm, propNorm),
+    [origNorm, propNorm],
   );
   const [hunkStatus, setHunkStatus] = useState<HunkStatus[]>([]);
   useEffect(() => {
@@ -143,31 +150,32 @@ export function AiDiffPane({
       languageCompartment.of(lang ?? []),
       ...READONLY_EXT,
       unifiedMergeView({
-        original: originalContent,
+        original: origNorm,
         mergeControls: false,
         highlightChanges: true,
         gutter: true,
         syntaxHighlightDeletions: true,
         collapseUnchanged: { margin: 3, minSize: 6 },
+        diffConfig: { scanLimit: DIFF_SCAN_LIMIT },
       }),
       DIFF_THEME,
     ],
-    [originalContent, lang],
+    [origNorm, lang],
   );
 
   // WYSIWYG preview: the content the user will actually get if they Accept
   // now — rejected hunks reverted to the original. When no hunk is rejected
   // this equals proposedContent, so the common case is visually unchanged.
   const previewContent = useMemo(
-    () => synthesizeFinalContent(originalContent, proposedContent, hunkStatus),
-    [originalContent, proposedContent, hunkStatus],
+    () => synthesizeFinalContent(origNorm, propNorm, hunkStatus),
+    [origNorm, propNorm, hunkStatus],
   );
 
   // Stats reflect original -> preview (what will actually be written), not the
   // raw proposal, so the +/- counts stay honest as the user rejects hunks.
   const stats = useMemo(
-    () => computeLineStats(originalContent, previewContent),
-    [originalContent, previewContent],
+    () => computeLineStats(origNorm, previewContent),
+    [origNorm, previewContent],
   );
 
   const handleAccept = () => {
