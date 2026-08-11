@@ -9,6 +9,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type FontWeight, Terminal } from "@xterm/xterm";
 import { shouldCursorBlink } from "./cursorBlink";
+import { CompositionInputGate } from "./compositionInputGate";
 import {
   readTerminalClipboard,
   writeTerminalClipboard,
@@ -208,6 +209,13 @@ function createSlot(): Slot {
   host.setAttribute("data-terax-slot", String(slots.length));
   getRecycler().appendChild(host);
   term.open(host);
+  const inputGate = new CompositionInputGate();
+  term.textarea?.addEventListener("compositionstart", () => {
+    inputGate.startComposition();
+  });
+  term.textarea?.addEventListener("compositionend", (event) => {
+    inputGate.endComposition(event.data, performance.now());
+  });
 
   const slot: Slot = {
     id: slots.length,
@@ -280,7 +288,8 @@ function createSlot(): Slot {
       if (event.type === "keydown") {
         const targetLeafId = slot.currentLeafId;
         void readTerminalClipboard().then((text) => {
-          if (text && slot.currentLeafId === targetLeafId) slot.term.paste(text);
+          if (text && slot.currentLeafId === targetLeafId)
+            slot.term.paste(text);
         });
       }
       event.preventDefault();
@@ -292,6 +301,7 @@ function createSlot(): Slot {
   term.onData((data) => {
     const leafId = slot.currentLeafId;
     if (leafId === null) return;
+    if (!inputGate.shouldForward(data, performance.now())) return;
     adapter?.resolveLeaf(leafId)?.writeToPty(data);
   });
 
