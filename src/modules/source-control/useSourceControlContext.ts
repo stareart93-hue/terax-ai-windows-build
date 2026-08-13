@@ -33,7 +33,19 @@ type Params = {
 export function agentSourceControlPath(
   tabs: Tab[],
   sessions: ReturnType<typeof useAgentStore.getState>["sessions"],
+  activeTab?: Tab,
 ): string | null {
+  if (activeTab?.kind === "terminal") {
+    const activeSession = sessions[activeTab.activeLeafId];
+    if (activeSession?.agent.toLowerCase().includes("claude")) {
+      return (
+        findLeafCwd(activeTab.paneTree, activeTab.activeLeafId) ??
+        activeTab.cwd ??
+        null
+      );
+    }
+  }
+
   const candidates = Object.values(sessions)
     .filter((s) => s.agent.toLowerCase().includes("claude"))
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
@@ -71,8 +83,8 @@ export function useSourceControlContext({
     : null;
   const agentSessions = useAgentStore((s) => s.sessions);
   const agentContextPath = useMemo(
-    () => agentSourceControlPath(tabs, agentSessions),
-    [tabs, agentSessions],
+    () => agentSourceControlPath(tabs, agentSessions, activeTab),
+    [tabs, agentSessions, activeTab],
   );
   const sourceControlContextPath = (() => {
     if (

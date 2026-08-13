@@ -54,6 +54,19 @@ describe("agentSourceControlPath", () => {
     );
   });
 
+  it("keeps source control on the active Claude terminal over a newer session", () => {
+    const activeTab = term(1, 10, "C:/repo/worktrees/current");
+    const tabs = [activeTab, term(2, 20, "C:/repo/worktrees/background")];
+    const sessions = {
+      10: session(10, "claude", 100),
+      20: session(20, "claude", 200),
+    };
+
+    expect(agentSourceControlPath(tabs, sessions, activeTab)).toBe(
+      "C:/repo/worktrees/current",
+    );
+  });
+
   it("does not let non-Claude agents claim the Claude source-control context", () => {
     const tabs = [term(1, 10, "C:/repo/claude"), term(2, 20, "C:/repo/codex")];
     const sessions = {

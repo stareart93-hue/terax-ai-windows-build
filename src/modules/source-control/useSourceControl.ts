@@ -50,9 +50,7 @@ export type SourceControlSummary = {
   applyStatus: (
     updater: (status: GitStatusSnapshot) => GitStatusSnapshot,
   ) => void;
-  refresh: (options?: {
-    remote?: SourceControlRefreshMode;
-  }) => Promise<void>;
+  refresh: (options?: { remote?: SourceControlRefreshMode }) => Promise<void>;
   runRemoteAction: (
     mode?: SourceControlRemoteActionMode,
   ) => Promise<SourceControlRemoteActionResult>;
@@ -103,7 +101,13 @@ export function getSourceControlRemoteIndicator(
   >,
 ): SourceControlRemoteIndicator {
   if (!summary.hasRepo || !summary.upstream) {
-    return { visible: false, label: "", title: "", disabled: true, action: null };
+    return {
+      visible: false,
+      label: "",
+      title: "",
+      disabled: true,
+      action: null,
+    };
   }
   if (summary.ahead > 0 && summary.behind > 0) {
     return {
@@ -176,6 +180,7 @@ export function useSourceControl(
   const requestIdRef = useRef(0);
   const inflightRef = useRef<Promise<void> | null>(null);
   const inflightModeRef = useRef<SourceControlRefreshMode>("never");
+  const queuedRefreshRef = useRef<SourceControlRefreshMode | null>(null);
   const autoFetchByRepoRef = useRef(new Map<string, number>());
   const enabledRef = useRef(enabled);
   const lastRefreshAtRef = useRef(0);
@@ -192,6 +197,7 @@ export function useSourceControl(
     requestIdRef.current++;
     inflightRef.current = null;
     inflightModeRef.current = "never";
+    queuedRefreshRef.current = null;
     autoFetchByRepoRef.current.clear();
     setState({
       repo: null,
@@ -243,7 +249,11 @@ export function useSourceControl(
           ? activeRoot
           : undefined;
 
-      setState((current) => ({ ...current, isLoading: true, localError: null }));
+      setState((current) => ({
+        ...current,
+        isLoading: true,
+        localError: null,
+      }));
 
       try {
         let repo: GitRepoInfo | null;
@@ -314,8 +324,7 @@ export function useSourceControl(
           repo.upstream &&
           remoteMode !== "never" &&
           (remoteMode === "always" ||
-            Date.now() -
-              (autoFetchByRepoRef.current.get(repo.repoRoot) ?? 0) >=
+            Date.now() - (autoFetchByRepoRef.current.get(repo.repoRoot) ?? 0) >=
               AUTO_FETCH_THROTTLE_MS);
 
         if (shouldAutoFetch) {
@@ -377,6 +386,14 @@ export function useSourceControl(
         const upgrade =
           (cur === "never" && remoteMode !== "never") ||
           (cur === "auto" && remoteMode === "always");
+        const queued = queuedRefreshRef.current;
+        if (
+          queued === null ||
+          (queued === "never" && remoteMode !== "never") ||
+          (queued === "auto" && remoteMode === "always")
+        ) {
+          queuedRefreshRef.current = remoteMode;
+        }
         if (!upgrade) return inflight;
       }
       inflightModeRef.current = remoteMode;
@@ -384,6 +401,9 @@ export function useSourceControl(
         if (inflightRef.current === run) {
           inflightRef.current = null;
           inflightModeRef.current = "never";
+          const queued = queuedRefreshRef.current;
+          queuedRefreshRef.current = null;
+          if (queued) void refresh({ remote: queued });
         }
       });
       inflightRef.current = run;
@@ -517,8 +537,14 @@ export function useSourceControl(
     let alive = true;
     void listen<{ kind: string }>("terax:agent-signal", (e) => {
       const kind = e.payload.kind;
-      // Only refresh on turn-ending / reset signals, not on every working tick.
-      if (kind !== "finished" && kind !== "idle" && kind !== "exited") return;
+      if (
+        kind !== "working" &&
+        kind !== "finished" &&
+        kind !== "idle" &&
+        kind !== "exited"
+      ) {
+        return;
+      }
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = 0;

@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  nextAttentionTarget,
-  useAgentStore,
-} from "./agentStore";
+import { nextAttentionTarget, useAgentStore } from "./agentStore";
 
 describe("agentStore three-state lifecycle", () => {
   beforeEach(() => {
@@ -85,14 +82,15 @@ describe("agentStore three-state lifecycle", () => {
     expect(useAgentStore.getState().sessions[1]).toBeUndefined();
   });
 
-  it("setStatus is a no-op when the status is unchanged", () => {
+  it("setStatus refreshes activity time when the status is unchanged", () => {
     const { start, setStatus } = useAgentStore.getState();
     start(1, 10, "claude");
     setStatus(1, "working"); // move to working first
     const before = useAgentStore.getState().sessions[1];
-    setStatus(1, "working"); // same as current — no-op
+    setStatus(1, "working");
     const after = useAgentStore.getState().sessions[1];
-    // Reference equality: no new object created.
-    expect(after).toBe(before);
+    expect(after).not.toBe(before);
+    expect(after.status).toBe("working");
+    expect(after.lastActivityAt).toBeGreaterThanOrEqual(before.lastActivityAt);
   });
 });
