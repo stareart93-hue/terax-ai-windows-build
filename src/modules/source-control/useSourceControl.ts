@@ -523,6 +523,34 @@ export function useSourceControl(
     };
   }, [refresh, enabled]);
 
+  // The shell integration emits this only after a local command returns to a
+  // prompt. It covers Git metadata mutations that file watching cannot see
+  // reliably for linked worktrees, where .git is a pointer file and HEAD
+  // lives in the main worktree's metadata directory.
+  useEffect(() => {
+    if (!enabled) return;
+    let timer = 0;
+    const onCommandComplete = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = 0;
+        lastRefreshAtRef.current = 0;
+        void refresh({ remote: "never" });
+      }, 100);
+    };
+    window.addEventListener(
+      "terax:terminal-command-complete",
+      onCommandComplete,
+    );
+    return () => {
+      window.removeEventListener(
+        "terax:terminal-command-complete",
+        onCommandComplete,
+      );
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [refresh, enabled]);
+
   // Live refresh on agent activity: when Claude Code (or another terminal
   // agent) finishes a turn or resets (/clear), it likely changed files on disk
   // — refresh so the explorer/source-control reflect the new state without the

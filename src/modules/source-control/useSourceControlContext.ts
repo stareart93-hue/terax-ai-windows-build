@@ -1,9 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { native } from "@/modules/ai/lib/native";
-import { useAgentStore } from "@/modules/agents/store/agentStore";
 import type { SidebarViewId } from "@/modules/sidebar";
 import type { Tab } from "@/modules/tabs";
-import { findLeafCwd, hasLeaf } from "@/modules/terminal";
 import { useSourceControl } from "./useSourceControl";
 
 function dirname(path: string | null): string | null {
@@ -30,41 +28,32 @@ type Params = {
   }) => void;
 };
 
-export function agentSourceControlPath(
-  tabs: Tab[],
-  sessions: ReturnType<typeof useAgentStore.getState>["sessions"],
-  activeTab?: Tab,
-): string | null {
+export function resolveSourceControlContextPath({
+  activeTab,
+  activeTerminalLeafCwd,
+  explorerRoot,
+  workspaceFallbackPath,
+}: Pick<Params, "activeTab" | "activeTerminalLeafCwd" | "explorerRoot"> & {
+  workspaceFallbackPath: string | null;
+}): string | null {
+  if (
+    activeTab?.kind === "git-diff" ||
+    activeTab?.kind === "git-commit-file" ||
+    activeTab?.kind === "git-history"
+  ) {
+    return activeTab.repoRoot;
+  }
   if (activeTab?.kind === "terminal") {
-    const activeSession = sessions[activeTab.activeLeafId];
-    if (activeSession?.agent.toLowerCase().includes("claude")) {
-      return (
-        findLeafCwd(activeTab.paneTree, activeTab.activeLeafId) ??
-        activeTab.cwd ??
-        null
-      );
-    }
+    return activeTerminalLeafCwd ?? explorerRoot ?? workspaceFallbackPath;
   }
-
-  const candidates = Object.values(sessions)
-    .filter((s) => s.agent.toLowerCase().includes("claude"))
-    .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
-
-  for (const session of candidates) {
-    const tab = tabs.find(
-      (t) => t.kind === "terminal" && hasLeaf(t.paneTree, session.leafId),
-    );
-    if (tab?.kind !== "terminal") continue;
-    return findLeafCwd(tab.paneTree, session.leafId) ?? tab.cwd ?? null;
-  }
-
-  return null;
+  if (activeTab?.kind === "editor") return dirname(activeTab.path);
+  return explorerRoot ?? workspaceFallbackPath;
 }
 
 /**
- * Resolves the source-control context path off the active tab and feeds the
- * source-control summary. When git is not active the badge tracks a stable
- * per-session path so tab switches / cd don't re-fire git IPC.
+ * Resolves the source-control context from the active surface. A terminal's
+ * OSC 7 cwd is the source of truth: agent identity and activity must never
+ * redirect Source Control to a background terminal or worktree.
  */
 export function useSourceControlContext({
   activeTab,
@@ -81,28 +70,12 @@ export function useSourceControlContext({
   const workspaceFallbackPath = launchCwdResolved
     ? (launchCwd ?? home ?? null)
     : null;
-  const agentSessions = useAgentStore((s) => s.sessions);
-  const agentContextPath = useMemo(
-    () => agentSourceControlPath(tabs, agentSessions, activeTab),
-    [tabs, agentSessions, activeTab],
-  );
-  const sourceControlContextPath = (() => {
-    if (
-      activeTab?.kind === "git-diff" ||
-      activeTab?.kind === "git-commit-file" ||
-      activeTab?.kind === "git-history"
-    ) {
-      return activeTab.repoRoot;
-    }
-    if (sidebarView === "source-control" && agentContextPath) {
-      return agentContextPath;
-    }
-    if (activeTab?.kind === "terminal") {
-      return activeTerminalLeafCwd ?? explorerRoot ?? workspaceFallbackPath;
-    }
-    if (activeTab?.kind === "editor") return dirname(activeTab.path);
-    return explorerRoot ?? workspaceFallbackPath;
-  })();
+  const sourceControlContextPath = resolveSourceControlContextPath({
+    activeTab,
+    activeTerminalLeafCwd,
+    explorerRoot,
+    workspaceFallbackPath,
+  });
   const hasOpenGitTab = useMemo(
     () =>
       tabs.some(

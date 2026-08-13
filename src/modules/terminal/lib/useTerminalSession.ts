@@ -341,6 +341,14 @@ function onLeafCommandState(leafId: number, running: boolean): void {
   if (!s || s.commandRunning === running) return;
   s.commandRunning = running;
   if (!running) {
+    // OSC 133 D/A comes from the local shell, so this is a trustworthy
+    // boundary at which Git metadata may have changed (checkout, commit,
+    // worktree operations). Consumers resolve the active leaf independently.
+    window.dispatchEvent(
+      new CustomEvent("terax:terminal-command-complete", {
+        detail: { leafId },
+      }),
+    );
     scheduleHiddenRelease(leafId, s);
     return;
   }
