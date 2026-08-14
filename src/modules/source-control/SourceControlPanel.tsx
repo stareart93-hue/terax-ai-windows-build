@@ -50,11 +50,13 @@ import {
 import { joinPath } from "@/modules/explorer/lib/useFileTree";
 import {
   AiContentGenerator02Icon,
+  Add01Icon,
   Alert02Icon,
   ArrowDown01Icon,
   ArrowRight01Icon,
   ArrowUp01Icon,
   CheckmarkCircle01Icon,
+  Delete02Icon,
   Download01Icon,
   Folder01Icon,
   FolderCloudIcon,
@@ -77,6 +79,13 @@ import {
   type ReactNode,
 } from "react";
 import type { SourceControlSummary } from "./useSourceControl";
+import { BranchReview } from "./BranchReview";
+import { useBranchReview } from "./useBranchReview";
+import {
+  NewWorktreeDialog,
+  type WorktreeSessionRequest,
+} from "./NewWorktreeDialog";
+import { useWorktreeDialogStore } from "./lib/worktreeDialogStore";
 import {
   useSourceControlPanel,
   type CheckState,
@@ -93,9 +102,11 @@ type Props = {
     mode: "+" | "-";
     originalPath: string | null;
     title?: string;
+    baseRef?: string | null;
   }) => void;
   onOpenFile?: (absolutePath: string) => void;
   onNavigateToPath?: (path: string) => void;
+  onOpenWorktreeSession?: (request: WorktreeSessionRequest) => void;
 };
 
 const SOURCE_CONTROL_TOOLTIP_CLASS =
@@ -176,8 +187,30 @@ function BranchDropdown({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<GitBranchEntry | null>(null);
+  const [removing, setRemoving] = useState(false);
   const requestRef = useRef(0);
   const checkoutInFlight = useRef(false);
+  const openWorktreeDialog = useWorktreeDialogStore((s) => s.openDialog);
+
+  const handleWorktreeRemove = useCallback(
+    async (entry: GitBranchEntry) => {
+      if (!repoRoot || !entry.worktreePath) return;
+      setRemoving(true);
+      try {
+        await native.gitWorktreeRemove(repoRoot, entry.worktreePath, true, true);
+        toast.success(`Removed worktree ${entry.name}`);
+        setPendingDelete(null);
+        setOpen(false);
+        onRefresh();
+      } catch (e) {
+        toast.error(String(e));
+      } finally {
+        setRemoving(false);
+      }
+    },
+    [repoRoot, onRefresh],
+  );
 
   const loadBranches = useCallback(async () => {
     const id = ++requestRef.current;
@@ -319,7 +352,7 @@ function BranchDropdown({
                         strokeWidth={1.5}
                         className="shrink-0 text-muted-foreground"
                       />
-                      <div className="flex min-w-0 flex-col">
+                      <div className="flex min-w-0 flex-1 flex-col">
                         <span className="truncate">{b.name}</span>
                         {b.worktreePath && (
                           <span className="truncate text-[10px] text-muted-foreground">
@@ -327,11 +360,45 @@ function BranchDropdown({
                           </span>
                         )}
                       </div>
+                      {b.worktreePath && (
+                        <button
+                          type="button"
+                          title="Remove worktree and branch"
+                          disabled={removing}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDelete(b);
+                          }}
+                          className="shrink-0 cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-destructive"
+                        >
+                          <HugeiconsIcon
+                            icon={Delete02Icon}
+                            size={12}
+                            strokeWidth={1.8}
+                          />
+                        </button>
+                      )}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuGroup>
               </>
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => {
+                if (repoRoot) openWorktreeDialog(repoRoot);
+              }}
+              disabled={!repoRoot}
+              className="flex cursor-pointer items-center gap-2 text-[12px]"
+            >
+              <HugeiconsIcon
+                icon={Add01Icon}
+                size={14}
+                strokeWidth={1.8}
+                className="shrink-0 text-muted-foreground"
+              />
+              New worktree…
+            </DropdownMenuItem>
             {branches.length === 0 && (
               <div className="px-3 py-3 text-[11px] text-muted-foreground">
                 No branches found.
@@ -340,6 +407,36 @@ function BranchDropdown({
           </>
         )}
       </DropdownMenuContent>
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove worktree?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the directory and force-deletes the branch
+              {" "}
+              <span className="font-mono">{pendingDelete?.name}</span>.
+              Uncommitted changes are lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removing}
+              onClick={(e) => {
+                e.preventDefault();
+                if (pendingDelete) void handleWorktreeRemove(pendingDelete);
+              }}
+            >
+              {removing ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DropdownMenu>
   );
 }
@@ -351,6 +448,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   onOpenDiff,
   onOpenFile,
   onNavigateToPath,
+  onOpenWorktreeSession,
 }: Props) {
   const scm = useSourceControlPanel(open, sourceControl, onOpenDiff);
   const refreshAnimationRef = useRef<number | null>(null);
@@ -358,6 +456,16 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
+  const worktreeDialog = useWorktreeDialogStore();
+  const [viewMode, setViewMode] = useState<"changes" | "review">("changes");
+  const review = useBranchReview(open, scm.repo, viewMode === "review");
+  const untrackedPaths = useMemo(
+    () =>
+      (scm.status?.changedFiles ?? [])
+        .filter((f) => f.untracked)
+        .map((f) => f.path),
+    [scm.status],
+  );
 
   useEffect(() => {
     return () => {
@@ -444,13 +552,14 @@ export const SourceControlPanel = memo(function SourceControlPanel({
     if (refreshAnimationRef.current) {
       window.clearTimeout(refreshAnimationRef.current);
     }
+    void review.refresh();
     void scm.refresh().finally(() => {
       refreshAnimationRef.current = window.setTimeout(() => {
         setRefreshAnimating(false);
         refreshAnimationRef.current = null;
       }, 450);
     });
-  }, [scm]);
+  }, [scm, review]);
 
   const handleFetch = useCallback(() => {
     void sourceControl.runRemoteAction("fetch");
@@ -794,6 +903,45 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
         {scm.panelState === "ready" && scm.status ? (
           <>
+            {review.baseline ? (
+              <div className="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-2 pt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("changes")}
+                  className={cn(
+                    "cursor-pointer border-b-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+                    viewMode === "changes"
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("review")}
+                  className={cn(
+                    "cursor-pointer border-b-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+                    viewMode === "review"
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Branch review
+                </button>
+              </div>
+            ) : null}
+
+            {viewMode === "review" && scm.repo && review.baseline ? (
+              <BranchReview
+                repoRoot={scm.repo.repoRoot}
+                review={review}
+                untrackedPaths={untrackedPaths}
+                onOpenDiff={onOpenDiff}
+              />
+            ) : null}
+
+            {viewMode === "changes" ? (
             <div className="relative shrink-0 space-y-2 border-b border-border/40 bg-gradient-to-b from-card/65 to-card/30 px-2.5 pb-2.5 pt-2.5">
               <div
                 className={cn(
@@ -930,10 +1078,12 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
               <CommitFeedback feedback={footerFeedback} />
             </div>
+            ) : null}
 
-            {scm.allClean ? (
-              <CleanTreeHint repoLabel={repoLabel} />
-            ) : (
+            {viewMode === "changes" ? (
+              scm.allClean ? (
+                <CleanTreeHint repoLabel={repoLabel} />
+              ) : (
               <div
                 ref={containerRef}
                 tabIndex={0}
@@ -1001,7 +1151,8 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                   </div>
                 </div>
               </div>
-            )}
+              )
+            ) : null}
           </>
         ) : null}
       </aside>
@@ -1033,6 +1184,19 @@ export const SourceControlPanel = memo(function SourceControlPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <NewWorktreeDialog
+        open={worktreeDialog.open}
+        onOpenChange={(o) => {
+          if (!o) worktreeDialog.close();
+        }}
+        repoRoot={worktreeDialog.repoRoot ?? scm.repo?.repoRoot ?? null}
+        onCreated={(request) => {
+          toast.success(`Created worktree ${request.branch}`);
+          handleRefresh();
+          onOpenWorktreeSession?.(request);
+        }}
+      />
     </TooltipProvider>
   );
 });

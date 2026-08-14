@@ -9,8 +9,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   commitDiffKey,
   fetchCommitDiff,
+  fetchReviewDiff,
   fetchWorkingDiff,
   getCachedDiff,
+  reviewDiffKey,
   workingDiffKey,
 } from "./lib/diffCache";
 import { DIFF_SCAN_LIMIT, normalizeForDiff } from "./lib/diffNormalize";
@@ -30,6 +32,14 @@ type WorkingSource = {
   originalPath: string | null;
 };
 
+type ReviewSource = {
+  kind: "review";
+  repoRoot: string;
+  path: string;
+  originalPath: string | null;
+  baseRef: string;
+};
+
 type CommitSource = {
   kind: "commit";
   repoRoot: string;
@@ -39,7 +49,7 @@ type CommitSource = {
 };
 
 type Props = {
-  source: WorkingSource | CommitSource;
+  source: WorkingSource | ReviewSource | CommitSource;
   chipLabel?: string;
   active: boolean;
 };
@@ -118,13 +128,19 @@ type LoadState =
     }
   | { kind: "error"; message: string };
 
-function cacheKey(source: WorkingSource | CommitSource): string {
-  return source.kind === "working"
-    ? workingDiffKey(source.repoRoot, source.path, source.mode)
-    : commitDiffKey(source.repoRoot, source.sha, source.path);
+function cacheKey(source: WorkingSource | ReviewSource | CommitSource): string {
+  if (source.kind === "working") {
+    return workingDiffKey(source.repoRoot, source.path, source.mode);
+  }
+  if (source.kind === "review") {
+    return reviewDiffKey(source.repoRoot, source.baseRef, source.path);
+  }
+  return commitDiffKey(source.repoRoot, source.sha, source.path);
 }
 
-function loadStateFromCache(source: WorkingSource | CommitSource): LoadState {
+function loadStateFromCache(
+  source: WorkingSource | ReviewSource | CommitSource,
+): LoadState {
   const hit = getCachedDiff(cacheKey(source));
   if (!hit) return { kind: "idle" };
   return {
@@ -163,12 +179,19 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
             source.mode,
             source.originalPath,
           )
-        : fetchCommitDiff(
-            source.repoRoot,
-            source.sha,
-            source.path,
-            source.originalPath,
-          );
+        : source.kind === "review"
+          ? fetchReviewDiff(
+              source.repoRoot,
+              source.baseRef,
+              source.path,
+              source.originalPath,
+            )
+          : fetchCommitDiff(
+              source.repoRoot,
+              source.sha,
+              source.path,
+              source.originalPath,
+            );
     Promise.all([promise, resolveLanguage(source.path).catch(() => null)])
       .then(([res, lang]) => {
         if (cancelled) return;
@@ -198,7 +221,8 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
 
   const path = source.path;
   const repoRoot = source.repoRoot;
-  const mode = source.kind === "working" ? source.mode : "+";
+  const mode =
+    source.kind === "working" ? source.mode : ("+" as const);
   const loaded = state.kind === "loaded" ? state : null;
   const originalContent = loaded?.originalContent ?? "";
   const modifiedContent = loaded?.modifiedContent ?? "";

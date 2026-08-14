@@ -51,6 +51,14 @@ export function commitDiffKey(
   return `${currentWorkspaceScopeKey()}|${repoRoot}|c|${sha}|${path}`;
 }
 
+export function reviewDiffKey(
+  repoRoot: string,
+  baseRef: string,
+  path: string,
+): string {
+  return `${currentWorkspaceScopeKey()}|${repoRoot}|r|${baseRef}|${path}`;
+}
+
 export async function fetchWorkingDiff(
   repoRoot: string,
   path: string,
@@ -88,6 +96,30 @@ export async function fetchCommitDiff(
   if (pending) return pending;
   const p = native
     .gitCommitFileDiff(repoRoot, sha, path, originalPath)
+    .then((res) => {
+      touch(key, res);
+      return res;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+  inflight.set(key, p);
+  return p;
+}
+
+export async function fetchReviewDiff(
+  repoRoot: string,
+  baseRef: string,
+  path: string,
+  originalPath: string | null,
+): Promise<GitDiffContentResult> {
+  const key = reviewDiffKey(repoRoot, baseRef, path);
+  const cached = getCachedDiff(key);
+  if (cached) return cached;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const p = native
+    .gitDiffContent(repoRoot, path, false, originalPath, baseRef)
     .then((res) => {
       touch(key, res);
       return res;

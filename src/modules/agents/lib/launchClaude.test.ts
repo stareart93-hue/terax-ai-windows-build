@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   claudeTuiAcceptsPrompt,
   claudeTuiNeedsUserChoice,
-} from "./useAiLiveBridge";
+} from "./launchClaude";
 
 describe("Claude TUI readiness", () => {
   it("accepts the normal prompt surface", () => {

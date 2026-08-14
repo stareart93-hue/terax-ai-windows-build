@@ -14,6 +14,24 @@ export function GitDiffStack({ tabs, activeId }: Props) {
   );
   if (!active) return null;
   if (active.kind === "git-diff") {
+    if (active.baseRef) {
+      return (
+        <div className="h-full w-full">
+          <GitDiffPane
+            key={active.id}
+            active
+            source={{
+              kind: "review",
+              repoRoot: active.repoRoot,
+              path: active.path,
+              originalPath: active.originalPath,
+              baseRef: active.baseRef,
+            }}
+            chipLabel="review"
+          />
+        </div>
+      );
+    }
     return (
       <div className="h-full w-full">
         <GitDiffPane

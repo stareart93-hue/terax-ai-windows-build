@@ -171,6 +171,8 @@ export type Preferences = {
   editorCustomFormatCommand: string;
   lspActivation: Record<string, LspActivation>;
   lspCustomServers: LspCustomServer[];
+  /** Canonical repo root -> baseline ref new worktrees branch from. */
+  worktreeBaseline: Record<string, string>;
 };
 
 export type EditorFormatter =
@@ -258,6 +260,7 @@ const KEY_EDITOR_FORMATTER_BY_LANG = "editorFormatterByLang";
 const KEY_EDITOR_CUSTOM_FORMAT_COMMAND = "editorCustomFormatCommand";
 const KEY_LSP_ACTIVATION = "lspActivation";
 const KEY_LSP_CUSTOM_SERVERS = "lspCustomServers";
+const KEY_WORKTREE_BASELINE = "worktreeBaseline";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_FONT_SIZE_MIN = 8;
@@ -339,6 +342,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorCustomFormatCommand: "",
   lspActivation: {},
   lspCustomServers: [],
+  worktreeBaseline: {},
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
@@ -526,7 +530,22 @@ export async function loadPreferences(): Promise<Preferences> {
     lspCustomServers:
       get<LspCustomServer[]>(KEY_LSP_CUSTOM_SERVERS) ??
       DEFAULT_PREFERENCES.lspCustomServers,
+    worktreeBaseline:
+      get<Record<string, string>>(KEY_WORKTREE_BASELINE) ??
+      DEFAULT_PREFERENCES.worktreeBaseline,
   };
+}
+
+export async function setWorktreeBaseline(
+  repoRoot: string,
+  ref: string | null,
+): Promise<void> {
+  const current =
+    ((await store.get(KEY_WORKTREE_BASELINE)) as Record<string, string>) ?? {};
+  const next = { ...current };
+  if (ref === null) delete next[repoRoot];
+  else next[repoRoot] = ref;
+  await writePref(KEY_WORKTREE_BASELINE, next);
 }
 
 export async function setLspActivation(
@@ -914,6 +933,7 @@ export async function onPreferencesChange(
     [KEY_EDITOR_CUSTOM_FORMAT_COMMAND]: "editorCustomFormatCommand",
     [KEY_LSP_ACTIVATION]: "lspActivation",
     [KEY_LSP_CUSTOM_SERVERS]: "lspCustomServers",
+    [KEY_WORKTREE_BASELINE]: "worktreeBaseline",
   };
   // Same-process writes still fire onChange immediately; cross-window writes
   // arrive via the Tauri event emitted by writePref().

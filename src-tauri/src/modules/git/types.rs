@@ -131,6 +131,43 @@ pub struct GitBranchListResult {
     pub branches: Vec<GitBranchEntry>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBaselineInfo {
+    pub baseline_ref: Option<String>,
+    pub remote: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteBranchListResult {
+    pub branches: Vec<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktreeCreateResult {
+    pub branch: String,
+    pub worktree_path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitReviewFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitReviewStatusResult {
+    pub files: Vec<GitReviewFile>,
+    pub files_changed: u32,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
 pub(crate) struct GitOutput {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,

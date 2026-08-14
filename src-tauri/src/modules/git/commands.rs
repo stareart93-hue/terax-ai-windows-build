@@ -2,9 +2,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::modules::git::operations;
 use crate::modules::git::types::{
-    DiscardEntry, GitBranchListResult, GitCommitFileChange, GitCommitResult,
+    DiscardEntry, GitBaselineInfo, GitBranchListResult, GitCommitFileChange, GitCommitResult,
     GitDiffContentResult, GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPushResult,
-    GitRepoInfo, GitStatusSnapshot,
+    GitRemoteBranchListResult, GitRepoInfo, GitReviewStatusResult, GitStatusSnapshot,
+    GitWorktreeCreateResult,
 };
 use crate::modules::workspace::{WorkspaceEnv, WorkspaceRegistry};
 
@@ -65,12 +66,21 @@ pub async fn git_diff(
     repo_root: String,
     path: Option<String>,
     staged: bool,
+    base_ref: Option<String>,
     workspace: Option<WorkspaceEnv>,
     app: AppHandle,
 ) -> Result<GitDiffResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
     blocking(app, move |r| {
-        operations::diff(r, &repo_root, path.as_deref(), staged, &workspace).map_err(Into::into)
+        operations::diff(
+            r,
+            &repo_root,
+            path.as_deref(),
+            staged,
+            base_ref.as_deref(),
+            &workspace,
+        )
+        .map_err(Into::into)
     })
     .await
 }
@@ -81,6 +91,7 @@ pub async fn git_diff_content(
     path: String,
     staged: bool,
     original_path: Option<String>,
+    base_ref: Option<String>,
     workspace: Option<WorkspaceEnv>,
     app: AppHandle,
 ) -> Result<GitDiffContentResult, String> {
@@ -92,6 +103,7 @@ pub async fn git_diff_content(
             &path,
             staged,
             original_path.as_deref(),
+            base_ref.as_deref(),
             &workspace,
         )
         .map_err(Into::into)
@@ -374,6 +386,79 @@ pub async fn git_checkout_branch(
     let workspace = WorkspaceEnv::from_option(workspace);
     blocking(app, move |r| {
         operations::checkout_branch(r, &repo_root, &branch, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_default_baseline(
+    repo_root: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<GitBaselineInfo, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::default_baseline(r, &repo_root, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_list_remote_branches(
+    repo_root: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<GitRemoteBranchListResult, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::list_remote_branches(r, &repo_root, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_worktree_create(
+    repo_root: String,
+    branch: String,
+    start_ref: Option<String>,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<GitWorktreeCreateResult, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::worktree_create(r, &repo_root, &branch, start_ref.as_deref(), &workspace)
+            .map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_worktree_remove(
+    repo_root: String,
+    path: String,
+    delete_branch: bool,
+    force: bool,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::worktree_remove(r, &repo_root, &path, delete_branch, force, &workspace)
+            .map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_review_status(
+    repo_root: String,
+    base_ref: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<GitReviewStatusResult, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::review_status(r, &repo_root, &base_ref, &workspace).map_err(Into::into)
     })
     .await
 }

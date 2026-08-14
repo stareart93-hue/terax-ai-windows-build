@@ -10,10 +10,11 @@ use crate::modules::git::process::{
     read_text_file, run_git,
 };
 use crate::modules::git::types::{
-    DiscardEntry, GitBranchEntry, GitBranchListResult, GitCommitFileChange, GitCommitResult,
-    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot,
-    GitPushResult, GitRepoInfo, GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS,
-    NETWORK_TIMEOUT_SECS,
+    DiscardEntry, GitBaselineInfo, GitBranchEntry, GitBranchListResult, GitCommitFileChange,
+    GitCommitResult, GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput,
+    GitPanelSnapshot, GitPushResult, GitRemoteBranchListResult, GitRepoInfo, GitReviewFile,
+    GitReviewStatusResult, GitStatusSnapshot, GitWorktreeCreateResult, TextSource,
+    DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
     authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream,
@@ -165,26 +166,43 @@ pub fn diff(
     repo_root: &str,
     path: Option<&str>,
     staged: bool,
+    base_ref: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<GitDiffResult> {
     let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
     ensure_git_available(&repo_root.workspace)?;
-    diff_inner(&repo_root, path, staged)
+    diff_inner(&repo_root, path, staged, base_ref)
 }
 
 fn diff_inner(
     repo_root: &ResolvedGitDirectory,
     path: Option<&str>,
     staged: bool,
+    base_ref: Option<&str>,
 ) -> Result<GitDiffResult> {
-    let mut args: Vec<OsString> = vec!["diff".into(), "--no-ext-diff".into()];
-    if staged {
-        args.push("--cached".into());
-    }
     let pathspec = match path.filter(|p| !p.is_empty()) {
         Some(p) => Some(pathspec_from_input(&repo_root.local_path, p)?),
         None => None,
     };
+
+    if let Some(base) = base_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        if !is_safe_ref(base) {
+            return Err(GitError::InvalidInput(format!("invalid base ref: {base:?}")));
+        }
+        let anchor = review_base_sha(repo_root, base)?;
+        let output = run_diff_against_commit(repo_root, &anchor, &[], pathspec.as_deref())?;
+        ensure_success(&output, "git diff failed")?;
+        let diff_text = String::from_utf8_lossy(&output.stdout).into_owned();
+        return Ok(GitDiffResult {
+            diff_text,
+            truncated: output.truncated,
+        });
+    }
+
+    let mut args: Vec<OsString> = vec!["diff".into(), "--no-ext-diff".into()];
+    if staged {
+        args.push("--cached".into());
+    }
     if let Some(spec) = pathspec.as_ref() {
         args.push("--".into());
         args.push(spec.clone().into());
@@ -213,6 +231,7 @@ pub fn diff_content(
     path: &str,
     staged: bool,
     original_path: Option<&str>,
+    base_ref: Option<&str>,
     workspace: &WorkspaceEnv,
 ) -> Result<GitDiffContentResult> {
     let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
@@ -228,30 +247,43 @@ pub fn diff_content(
         _ => None,
     };
 
-    let original = if staged {
+    let (original, modified) = if let Some(base) = base_ref.map(str::trim).filter(|s| !s.is_empty())
+    {
+        if !is_safe_ref(base) {
+            return Err(GitError::InvalidInput(format!("invalid base ref: {base:?}")));
+        }
         let spec = original_rel.as_deref().unwrap_or(&rel_path);
-        git_show_text(
+        let anchor = review_base_sha(&repo_root, base)?;
+        let original = git_show_text(
+            &repo_root.workspace,
+            &repo_root.git_path,
+            &format!("{anchor}:{spec}"),
+        )?;
+        let modified = read_text_file(&worktree_path)?;
+        (original, modified)
+    } else if staged {
+        let spec = original_rel.as_deref().unwrap_or(&rel_path);
+        let original = git_show_text(
             &repo_root.workspace,
             &repo_root.git_path,
             &format!("HEAD:{spec}"),
-        )?
-    } else {
-        git_show_text(
+        )?;
+        let modified = git_show_text(
             &repo_root.workspace,
             &repo_root.git_path,
             &format!(":{rel_path}"),
-        )?
-    };
-    let modified = if staged {
-        git_show_text(
+        )?;
+        (original, modified)
+    } else {
+        let original = git_show_text(
             &repo_root.workspace,
             &repo_root.git_path,
             &format!(":{rel_path}"),
-        )?
-    } else {
-        read_text_file(&worktree_path)?
+        )?;
+        let modified = read_text_file(&worktree_path)?;
+        (original, modified)
     };
-    let patch = diff_inner(&repo_root, Some(&rel_path), staged)?;
+    let patch = diff_inner(&repo_root, Some(&rel_path), staged, base_ref)?;
     let is_binary =
         matches!(original, TextSource::Binary) || matches!(modified, TextSource::Binary);
 
@@ -1305,6 +1337,568 @@ pub fn checkout_branch(
     ensure_success(&output, "git checkout failed")
 }
 
+/// Validates a branch or ref name before it is spliced into a git command:
+/// rejects option injection, control characters, git's forbidden ref bytes and
+/// malformed components.
+fn is_safe_ref(refname: &str) -> bool {
+    if refname.is_empty() || refname.starts_with('-') || refname.starts_with('/') {
+        return false;
+    }
+    if refname.ends_with('/') || refname.ends_with('.') || refname.ends_with(".lock") {
+        return false;
+    }
+    if refname.contains("..") || refname.contains("//") || refname.contains("@{") {
+        return false;
+    }
+    for c in refname.chars() {
+        if (c as u32) < 0x20 || c == '\u{7f}' {
+            return false;
+        }
+        if matches!(c, ' ' | '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return false;
+        }
+    }
+    !refname.split('/').any(str::is_empty)
+}
+
+fn remote_name_for(repo_root: &ResolvedGitDirectory) -> Result<Option<String>> {
+    let remotes: Vec<String> = git_stdout_lines(&repo_root.workspace, &repo_root.git_path, ["remote"])?
+        .into_iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(remotes
+        .iter()
+        .find(|r| *r == "origin")
+        .or_else(|| remotes.first())
+        .cloned())
+}
+
+/// origin/HEAD when the remote advertises it, else the first of main/master/
+/// develop that exists locally.
+fn default_baseline_ref_for(repo_root: &ResolvedGitDirectory) -> Result<Option<String>> {
+    if let Some(remote) = remote_name_for(repo_root)?.as_deref() {
+        let symref = format!("refs/remotes/{remote}/HEAD");
+        if let Some(head) =
+            git_stdout_line_opt(&repo_root.workspace, &repo_root.git_path, ["symbolic-ref", symref.as_str()])?
+        {
+            let prefix = format!("refs/remotes/{remote}/");
+            if let Some(branch) = head.trim().strip_prefix(&prefix).filter(|b| !b.is_empty()) {
+                return Ok(Some(format!("{remote}/{branch}")));
+            }
+        }
+    }
+    for candidate in ["main", "master", "develop"] {
+        let full = format!("refs/heads/{candidate}");
+        if git_stdout_line_opt(
+            &repo_root.workspace,
+            &repo_root.git_path,
+            ["rev-parse", "--verify", "--quiet", full.as_str()],
+        )?
+        .is_some()
+        {
+            return Ok(Some(candidate.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+pub fn default_baseline(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<GitBaselineInfo> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    Ok(GitBaselineInfo {
+        baseline_ref: default_baseline_ref_for(&repo_root)?,
+        remote: remote_name_for(&repo_root)?,
+    })
+}
+
+pub fn list_remote_branches(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<GitRemoteBranchListResult> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let branches = git_stdout_lines(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["branch", "--remote", "--format=%(refname:short)"],
+    )?
+    .into_iter()
+    .map(|l| l.trim().to_string())
+    .filter(|l| !l.is_empty() && !l.ends_with("/HEAD"))
+    .collect();
+    Ok(GitRemoteBranchListResult { branches })
+}
+
+struct WorktreeListEntry {
+    path: String,
+    branch: Option<String>,
+    bare: bool,
+}
+
+fn push_worktree_entry(
+    entries: &mut Vec<WorktreeListEntry>,
+    path: &mut Option<String>,
+    branch: &mut Option<String>,
+    bare: &mut bool,
+) {
+    if let Some(p) = path.take() {
+        entries.push(WorktreeListEntry {
+            path: p,
+            branch: branch.take(),
+            bare: *bare,
+        });
+    }
+    *bare = false;
+}
+
+fn list_worktree_entries(repo_root: &ResolvedGitDirectory) -> Result<Vec<WorktreeListEntry>> {
+    let lines = git_stdout_lines(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["worktree", "list", "--porcelain"],
+    )?;
+    let mut entries = Vec::new();
+    let mut path: Option<String> = None;
+    let mut branch: Option<String> = None;
+    let mut bare = false;
+    for line in &lines {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            push_worktree_entry(&mut entries, &mut path, &mut branch, &mut bare);
+            path = Some(rest.trim().to_string());
+            branch = None;
+        } else if let Some(rest) = line.strip_prefix("HEAD ") {
+            let _ = rest;
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            let raw = rest.trim();
+            branch = Some(raw.strip_prefix("refs/heads/").unwrap_or(raw).to_string());
+        } else if line.starts_with("bare") {
+            bare = true;
+        } else if line.starts_with("detached") {
+            branch = None;
+        }
+    }
+    push_worktree_entry(&mut entries, &mut path, &mut branch, &mut bare);
+    Ok(entries)
+}
+
+fn worktree_key(path: &str, workspace: &WorkspaceEnv) -> Option<String> {
+    if workspace.is_wsl() {
+        Some(path.trim().replace('\\', "/"))
+    } else {
+        std::fs::canonicalize(path)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+    }
+}
+
+fn worktree_key_of(resolved: &ResolvedGitDirectory, workspace: &WorkspaceEnv) -> String {
+    if workspace.is_wsl() {
+        resolved.git_path.clone()
+    } else {
+        resolved.local_path.to_string_lossy().into_owned()
+    }
+}
+
+const WORKTREE_INCLUDE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const WORKTREE_INCLUDE_MAX_DEPTH: usize = 4;
+
+/// Copy gitignored helper files (env, editor config) into a fresh worktree per
+/// the repo's `.worktreeinclude` globs. Plain copies only: symlinks and targets
+/// that already exist are skipped, and the total payload is capped.
+fn apply_worktree_include(repo_root: &Path, worktree_root: &Path) -> Result<usize> {
+    let Ok(text) = std::fs::read_to_string(repo_root.join(".worktreeinclude")) else {
+        return Ok(0);
+    };
+    let mut builder = globset::GlobSetBuilder::new();
+    let mut has_pattern = false;
+    for line in text.lines() {
+        let pattern = line.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+        if let Ok(glob) = globset::Glob::new(pattern) {
+            builder.add(glob);
+            has_pattern = true;
+        }
+    }
+    if !has_pattern {
+        return Ok(0);
+    }
+    let set = builder
+        .build()
+        .map_err(|e| GitError::Io(std::io::Error::other(e)))?;
+
+    let mut copied = 0usize;
+    let mut budget = WORKTREE_INCLUDE_MAX_BYTES;
+    let mut stack: Vec<(PathBuf, usize)> = vec![(repo_root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if file_type.is_dir() {
+                if depth < WORKTREE_INCLUDE_MAX_DEPTH
+                    && !matches!(
+                        name.as_ref(),
+                        ".git" | "node_modules" | "target" | ".cache" | ".worktrees"
+                    )
+                {
+                    stack.push((entry.path(), depth + 1));
+                }
+                continue;
+            }
+            let path = entry.path();
+            let Ok(rel) = path.strip_prefix(repo_root) else {
+                continue;
+            };
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if !set.is_match(&rel_str) {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                continue;
+            }
+            let dest = worktree_root.join(rel);
+            if dest.exists() {
+                continue;
+            }
+            if meta.len() > budget {
+                return Ok(copied);
+            }
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::copy(&path, &dest).is_ok() {
+                budget -= meta.len();
+                copied += 1;
+            }
+        }
+    }
+    Ok(copied)
+}
+
+/// Create a worktree for a new branch at `<repo sibling dir>/<repo>-<branch>`,
+/// based on `start_ref` (or the repo baseline when omitted). The new path is
+/// registered with the workspace registry so git/fs commands on it are
+/// authorized immediately.
+pub fn worktree_create(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    branch: &str,
+    start_ref: Option<&str>,
+    workspace: &WorkspaceEnv,
+) -> Result<GitWorktreeCreateResult> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+
+    let branch = branch.trim();
+    if !is_safe_ref(branch) {
+        return Err(GitError::InvalidInput(format!(
+            "invalid branch name: {branch:?}"
+        )));
+    }
+    let start = match start_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => {
+            if !is_safe_ref(s) {
+                return Err(GitError::InvalidInput(format!("invalid ref: {s:?}")));
+            }
+            s.to_string()
+        }
+        None => default_baseline_ref_for(&repo_root)?.ok_or_else(|| {
+            GitError::InvalidInput(
+                "no start ref: set a baseline branch for this repository first".into(),
+            )
+        })?,
+    };
+
+    let branch_ref = format!("refs/heads/{branch}");
+    if git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["rev-parse", "--verify", "--quiet", branch_ref.as_str()],
+    )?
+    .is_some()
+    {
+        return Err(GitError::InvalidInput(format!(
+            "branch already exists: {branch}"
+        )));
+    }
+
+    let git_root = Path::new(&repo_root.git_path);
+    let repo_name = git_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repo".into());
+    let parent = git_root.parent().ok_or_else(|| {
+        GitError::InvalidInput(format!(
+            "cannot derive a sibling directory for {}",
+            repo_root.git_path
+        ))
+    })?;
+    let target_git_path = parent
+        .join(format!("{repo_name}-{}", branch.replace('/', "-")))
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        [
+            OsStr::new("worktree"),
+            OsStr::new("add"),
+            OsStr::new("--quiet"),
+            OsStr::new("-b"),
+            OsStr::new(branch),
+            OsStr::new(target_git_path.as_str()),
+            OsStr::new(start.as_str()),
+        ],
+        NETWORK_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git worktree add failed")?;
+
+    // A remote-tracking start makes ahead/behind meaningful right away; local
+    // starts are stacking and intentionally stay untracked.
+    let is_remote_start = remote_name_for(&repo_root)?
+        .map(|remote| start.starts_with(&format!("{remote}/")))
+        .unwrap_or(false);
+    if is_remote_start {
+        let _ = run_git(
+            &repo_root.workspace,
+            Some(&repo_root.git_path),
+            [
+                OsStr::new("branch"),
+                OsStr::new("--set-upstream-to"),
+                OsStr::new(start.as_str()),
+                OsStr::new(branch),
+            ],
+            DEFAULT_TIMEOUT_SECS,
+        );
+    }
+
+    let resolved = canonical_dir(registry, &target_git_path, workspace)?;
+    let _ = registry.authorize(&resolved.local_path);
+    if !repo_root.workspace.is_wsl() {
+        apply_worktree_include(&repo_root.local_path, &resolved.local_path)?;
+    }
+
+    Ok(GitWorktreeCreateResult {
+        branch: branch.to_string(),
+        worktree_path: resolved.git_path,
+    })
+}
+
+/// Remove a linked worktree of this repository. The path must be a registered
+/// worktree (parsed from `git worktree list`), never the main worktree or an
+/// arbitrary directory. Optionally force-delete the branch checked out there.
+pub fn worktree_remove(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    path: &str,
+    delete_branch: bool,
+    force: bool,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let target = canonical_dir(registry, path, workspace)?;
+    let target_key = worktree_key_of(&target, workspace);
+
+    // The porcelain list includes the main worktree; `git worktree remove`
+    // cannot delete it, so identify and refuse it explicitly.
+    let common_dir = git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["rev-parse", "--git-common-dir"],
+    )?;
+    let main_root = common_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|cd| {
+            let cd_path = Path::new(cd);
+            if cd_path.is_absolute() {
+                cd_path
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+            } else {
+                Some(repo_root.git_path.clone())
+            }
+        });
+    let main_key = main_root.as_deref().and_then(|m| worktree_key(m, workspace));
+
+    let entry = list_worktree_entries(&repo_root)?
+        .into_iter()
+        .filter(|e| !e.bare)
+        .find(|e| worktree_key(&e.path, workspace).as_deref() == Some(target_key.as_str()))
+        .ok_or_else(|| {
+            GitError::InvalidInput(format!("not a worktree of this repository: {path}"))
+        })?;
+    if let Some(key) = worktree_key(&entry.path, workspace) {
+        if main_key.as_deref() == Some(key.as_str()) {
+            return Err(GitError::InvalidInput(
+                "the main worktree cannot be removed".into(),
+            ));
+        }
+    }
+
+    let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
+    if force {
+        args.push("--force".into());
+    }
+    args.push(target.git_path.clone().into());
+    let output = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        args,
+        NETWORK_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git worktree remove failed")?;
+
+    if delete_branch {
+        if let Some(branch) = entry.branch.as_deref().filter(|b| is_safe_ref(b)) {
+            let output = run_git(
+                &repo_root.workspace,
+                Some(&repo_root.git_path),
+                ["branch", "-D", branch],
+                DEFAULT_TIMEOUT_SECS,
+            )?;
+            ensure_success(&output, "git branch -D failed")?;
+        }
+    }
+    let _ = run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        ["worktree", "prune"],
+        DEFAULT_TIMEOUT_SECS,
+    );
+    Ok(())
+}
+
+/// The anchor commit a branch review diffs against: the merge base of `base`
+/// and HEAD, falling back to `base` itself when HEAD is unborn (fresh
+/// worktree with no commits yet).
+fn review_base_sha(repo_root: &ResolvedGitDirectory, base: &str) -> Result<String> {
+    let merge_base = git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["merge-base", base, "HEAD"],
+    )?
+    .map(|s| s.trim().to_string())
+    .filter(|s| sha_is_safe(s));
+    if let Some(sha) = merge_base {
+        return Ok(sha);
+    }
+    git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            format!("{base}^{{commit}}").as_str(),
+        ],
+    )?
+    .map(|s| s.trim().to_string())
+    .filter(|s| sha_is_safe(s))
+    .ok_or_else(|| {
+        GitError::command("git merge-base", "could not resolve a base commit for the diff")
+    })
+}
+
+fn run_diff_against_commit(
+    repo_root: &ResolvedGitDirectory,
+    sha: &str,
+    extra_args: &[&str],
+    pathspec: Option<&str>,
+) -> Result<GitOutput> {
+    let mut args: Vec<OsString> = vec!["diff".into(), "--no-ext-diff".into()];
+    args.extend(extra_args.iter().map(|a| (*a).into()));
+    args.push(sha.into());
+    if let Some(spec) = pathspec {
+        args.push("--".into());
+        args.push(spec.into());
+    }
+    run_git(
+        &repo_root.workspace,
+        Some(&repo_root.git_path),
+        args,
+        DEFAULT_TIMEOUT_SECS,
+    )
+}
+
+fn parse_diff_name_status(bytes: &[u8]) -> Vec<GitReviewFile> {
+    let s = std::str::from_utf8(bytes).unwrap_or("");
+    let mut tokens = s.split('\0').filter(|t| !t.is_empty());
+    let mut files: Vec<GitReviewFile> = Vec::new();
+    while let Some(status_tok) = tokens.next() {
+        let status_char = status_tok.chars().next().unwrap_or(' ');
+        if status_char == 'R' || status_char == 'C' {
+            let Some(original) = tokens.next() else { break };
+            let Some(path) = tokens.next() else { break };
+            files.push(GitReviewFile {
+                path: path.to_string(),
+                original_path: Some(original.to_string()),
+                status: status_char.to_string(),
+            });
+        } else {
+            let Some(path) = tokens.next() else { break };
+            files.push(GitReviewFile {
+                path: path.to_string(),
+                original_path: None,
+                status: status_char.to_string(),
+            });
+        }
+    }
+    files
+}
+
+/// Everything this branch changed relative to `base_ref`: diff from the merge
+/// base to the working tree, so committed and uncommitted work both show.
+pub fn review_status(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    base_ref: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<GitReviewStatusResult> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let base = base_ref.trim();
+    if !is_safe_ref(base) {
+        return Err(GitError::InvalidInput(format!(
+            "invalid base ref: {base:?}"
+        )));
+    }
+    let anchor = review_base_sha(&repo_root, base)?;
+
+    let output = run_diff_against_commit(&repo_root, &anchor, &["--name-status", "-z"], None)?;
+    ensure_success(&output, "git diff failed")?;
+    let files = parse_diff_name_status(&output.stdout);
+
+    let shortstat = run_diff_against_commit(&repo_root, &anchor, &["--shortstat"], None)?;
+    ensure_success(&shortstat, "git diff --shortstat failed")?;
+    let text = String::from_utf8_lossy(&shortstat.stdout).into_owned();
+    let (files_changed, additions, deletions) = parse_shortstat(&text);
+    Ok(GitReviewStatusResult {
+        files,
+        files_changed,
+        additions,
+        deletions,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1382,5 +1976,121 @@ mod tests {
             "fatal: your current branch 'main' does not have any commits yet"
         )));
         assert!(!looks_like_no_head(&mk("fatal: pathspec did not match")));
+    }
+
+    #[test]
+    fn is_safe_ref_accepts_branch_like_names() {
+        assert!(is_safe_ref("main"));
+        assert!(is_safe_ref("feature/fix-login"));
+        assert!(is_safe_ref("origin/main"));
+        assert!(is_safe_ref("fix.a"));
+    }
+
+    #[test]
+    fn is_safe_ref_rejects_injection_and_malformed() {
+        for bad in [
+            "",
+            "-f",
+            "--force",
+            "a b",
+            "a..b",
+            "a//b",
+            "a/",
+            "/a",
+            "a:b",
+            "a~1",
+            "a^",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            "a@{u}",
+            "branch.lock",
+            "a.",
+        ] {
+            assert!(!is_safe_ref(bad), "expected rejection: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn parse_diff_name_status_plain_and_rename() {
+        let plain = b"M\0src/a.ts\0A\0src/new.ts\0D\0old.ts\0";
+        let files = parse_diff_name_status(plain);
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].status, "M");
+        assert_eq!(files[0].path, "src/a.ts");
+        assert!(files[0].original_path.is_none());
+        assert_eq!(files[1].status, "A");
+        assert_eq!(files[2].status, "D");
+
+        let renamed = b"R100\0src/old.ts\0src/new.ts\0";
+        let files = parse_diff_name_status(renamed);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].status, "R");
+        assert_eq!(files[0].path, "src/new.ts");
+        assert_eq!(files[0].original_path.as_deref(), Some("src/old.ts"));
+    }
+
+    #[test]
+    fn apply_worktree_include_copies_matching_files() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join(".env"), "KEY=1\n").unwrap();
+        std::fs::write(src.path().join("deploy.env"), "KEY=2\n").unwrap();
+        std::fs::create_dir(src.path().join(".vscode")).unwrap();
+        std::fs::write(src.path().join(".vscode/settings.json"), "{}\n").unwrap();
+        std::fs::write(src.path().join("README.md"), "no\n").unwrap();
+        std::fs::write(
+            src.path().join(".worktreeinclude"),
+            ".env\n*.env\n.vscode/settings.json\n# comment\n",
+        )
+        .unwrap();
+
+        let copied = apply_worktree_include(src.path(), dst.path()).unwrap();
+        assert_eq!(copied, 3);
+        assert!(dst.path().join(".env").is_file());
+        assert!(dst.path().join("deploy.env").is_file());
+        assert!(dst.path().join(".vscode/settings.json").is_file());
+        assert!(!dst.path().join("README.md").exists());
+    }
+
+    #[test]
+    fn apply_worktree_include_skips_existing_targets() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join(".env"), "new\n").unwrap();
+        std::fs::write(dst.path().join(".env"), "already there\n").unwrap();
+        std::fs::write(src.path().join(".worktreeinclude"), ".env\n").unwrap();
+
+        let copied = apply_worktree_include(src.path(), dst.path()).unwrap();
+        assert_eq!(copied, 0);
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join(".env")).unwrap(),
+            "already there\n"
+        );
+    }
+
+    #[test]
+    fn apply_worktree_include_without_config_is_a_noop() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join(".env"), "KEY=1\n").unwrap();
+        assert_eq!(apply_worktree_include(src.path(), dst.path()).unwrap(), 0);
+        assert!(!dst.path().join(".env").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_worktree_include_skips_symlinks() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("real.txt"), "x\n").unwrap();
+        std::os::unix::fs::symlink("real.txt", src.path().join("linked.txt")).unwrap();
+        std::fs::write(src.path().join(".worktreeinclude"), "*.txt\n").unwrap();
+
+        let copied = apply_worktree_include(src.path(), dst.path()).unwrap();
+        assert_eq!(copied, 1);
+        assert!(dst.path().join("real.txt").is_file());
+        assert!(!dst.path().join("linked.txt").exists());
     }
 }

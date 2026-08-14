@@ -95,6 +95,8 @@ export type GitDiffTab = TabBase & {
   repoRoot: string;
   mode: "-" | "+";
   originalPath: string | null;
+  /** When set, the diff is branch review: merge-base of this ref vs the file. */
+  baseRef: string | null;
 };
 
 export type GitHistoryTab = TabBase & {
@@ -792,23 +794,29 @@ export function useTabs(initial?: Partial<TerminalTab>) {
       mode: "-" | "+";
       originalPath?: string | null;
       title?: string;
+      baseRef?: string | null;
     }) => {
       const curr = tabsRef.current;
+      const baseRef = input.baseRef ?? null;
       const existing = curr.find(
         (t) =>
           t.kind === "git-diff" &&
           t.repoRoot === input.repoRoot &&
           t.path === input.path &&
-          t.mode === input.mode,
+          t.mode === input.mode &&
+          t.baseRef === baseRef,
       );
       const computedTitle =
-        input.title ?? `${basename(input.path)} (${input.mode})`;
+        input.title ??
+        (baseRef
+          ? `${basename(input.path)} (review)`
+          : `${basename(input.path)} (${input.mode})`);
       const originalPath = input.originalPath ?? null;
 
       if (existing) {
         const nextTabs = curr.map((t) =>
           t.id === existing.id
-            ? { ...t, title: computedTitle, originalPath }
+            ? { ...t, title: computedTitle, originalPath, baseRef }
             : t,
         );
         tabsRef.current = nextTabs;
@@ -829,6 +837,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           repoRoot: input.repoRoot,
           mode: input.mode,
           originalPath,
+          baseRef,
         } satisfies GitDiffTab,
       ];
       tabsRef.current = nextTabs;

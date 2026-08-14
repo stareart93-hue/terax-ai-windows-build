@@ -62,7 +62,10 @@ import {
 import {
   SourceControlPanel,
   useSourceControlContext,
+  useWorktreeDialogStore,
+  type WorktreeSessionRequest,
 } from "@/modules/source-control";
+import { launchClaudeTerminal } from "@/modules/agents/lib/launchClaude";
 import {
   SpaceSidebar,
   useSpacePersistence,
@@ -660,6 +663,33 @@ export default function App() {
       cycleSidebarView,
       openCommitHistoryTab,
     });
+
+  const openWorktreeSession = useCallback(
+    (request: WorktreeSessionRequest) => {
+      const title = request.claude
+        ? `claude · ${request.branch}`
+        : request.branch;
+      const { leafId } = newAgentTab(request.worktreePath, title);
+      if (!request.claude) return;
+      const readBuf = () => {
+        const term = terminalRefs.current.get(leafId);
+        return term ? term.getBuffer(120) : null;
+      };
+      void launchClaudeTerminal({
+        leafId,
+        readBuf,
+        prompt: request.prompt,
+      });
+    },
+    [newAgentTab],
+  );
+
+  const openNewWorktreeDialog = useCallback(() => {
+    const root = sourceControl.repo?.repoRoot ?? null;
+    if (!root) return;
+    cycleSidebarView("source-control");
+    useWorktreeDialogStore.getState().openDialog(root);
+  }, [sourceControl.repo, cycleSidebarView]);
   const explorerGitDecorations = usePreferencesStore(
     (s) => s.explorerGitDecorations,
   );
@@ -1095,6 +1125,7 @@ export default function App() {
             openNewPreview: () => openPreviewTab(""),
             openGitGraph: openGitGraphFromContext,
             toggleSourceControl,
+            openNewWorktree: openNewWorktreeDialog,
             closeActiveTabOrPane: handleCloseTabOrPane,
             splitPaneRight: () => splitActivePaneInActiveTab("row"),
             splitPaneDown: () => splitActivePaneInActiveTab("col"),
@@ -1126,6 +1157,7 @@ export default function App() {
       openPreviewTab,
       openGitGraphFromContext,
       toggleSourceControl,
+      openNewWorktreeDialog,
       handleCloseTabOrPane,
       splitActivePaneInActiveTab,
       toggleSidebar,
@@ -1315,6 +1347,7 @@ export default function App() {
                           onOpenGitGraph={openGitGraphFromContext}
                           onOpenFile={handleOpenFile}
                           onNavigateToPath={cdInNewTab}
+                          onOpenWorktreeSession={openWorktreeSession}
                         />
                       </ErrorBoundary>
                     )}

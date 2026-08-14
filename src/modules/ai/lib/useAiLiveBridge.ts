@@ -1,48 +1,13 @@
 import { type RefObject, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { useManagedAgentsStore } from "@/modules/agents/store/managedAgentsStore";
+import { launchClaudeTerminal } from "@/modules/agents/lib/launchClaude";
 import {
   findLeafCwd,
   type TerminalPaneHandle,
-  whenSessionReady,
-  writeToSession,
 } from "@/modules/terminal";
 import type { Tab } from "@/modules/tabs";
 import type { Live } from "../store/chatStore";
 import { redactSensitive } from "./redact";
-
-type TuiWaitResult = "ready" | "blocked" | "gone" | "timeout";
-
-export function claudeTuiNeedsUserChoice(buf: string): boolean {
-  const s = buf.toLowerCase();
-  return (
-    s.includes("do you trust") ||
-    s.includes("permission") ||
-    s.includes("select an option") ||
-    s.includes("choose an option") ||
-    (s.includes("yes") && s.includes("no") && s.includes("enter"))
-  );
-}
-
-export function claudeTuiAcceptsPrompt(buf: string): boolean {
-  const s = buf.toLowerCase();
-  return s.includes("shortcuts") && !claudeTuiNeedsUserChoice(s);
-}
-
-async function waitForClaudeTuiReady(
-  readBuf: () => string | null,
-  timeoutMs = 8000,
-): Promise<TuiWaitResult> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const buf = readBuf();
-    if (buf === null) return "gone";
-    if (claudeTuiNeedsUserChoice(buf)) return "blocked";
-    if (claudeTuiAcceptsPrompt(buf)) return "ready";
-    await new Promise((r) => setTimeout(r, 120));
-  }
-  return "timeout";
-}
 
 type Params = {
   setLive: (live: Live) => void;
@@ -145,40 +110,30 @@ export function useAiLiveBridge(params: Params) {
         useManagedAgentsStore
           .getState()
           .register({ leafId, tabId, sessionId, task: oneLine, cwd });
-        const hooksReady = invoke("agent_enable_hooks", {
-          agent: "claude",
-        }).catch(() => {});
-        void (async () => {
-          await Promise.all([whenSessionReady(leafId), hooksReady]);
-          if (!writeToSession(leafId, "claude\r")) {
-            useManagedAgentsStore.getState().remove(leafId);
+        const readBuf = () => {
+          const term = terminalRefs.current.get(leafId);
+          return term ? term.getBuffer(120) : null;
+        };
+        void launchClaudeTerminal({
+          leafId,
+          readBuf,
+          prompt: oneLine,
+        }).then((result) => {
+          if (result === "ready") {
+            useManagedAgentsStore.getState().setPhase(leafId, "working");
             return;
           }
-          const readBuf = () => {
-            const term = terminalRefs.current.get(leafId);
-            return term ? term.getBuffer(120) : null;
-          };
-          const result = await waitForClaudeTuiReady(readBuf);
-          if (result !== "ready") {
-            if (result === "blocked") {
-              console.warn(
-                "[terax] Claude TUI needs a user choice; aborting prompt send",
-              );
-            } else if (result === "timeout") {
-              console.warn(
-                "[terax] Claude TUI did not appear in time; aborting prompt send",
-              );
-            }
-            useManagedAgentsStore.getState().remove(leafId);
-            return;
+          if (result === "blocked") {
+            console.warn(
+              "[terax] Claude TUI needs a user choice; aborting prompt send",
+            );
+          } else if (result === "timeout") {
+            console.warn(
+              "[terax] Claude TUI did not appear in time; aborting prompt send",
+            );
           }
-          if (!writeToSession(leafId, `\x1b[200~${trimmed}\x1b[201~`)) {
-            useManagedAgentsStore.getState().remove(leafId);
-            return;
-          }
-          setTimeout(() => writeToSession(leafId, "\r"), 120);
-          useManagedAgentsStore.getState().setPhase(leafId, "working");
-        })();
+          useManagedAgentsStore.getState().remove(leafId);
+        });
         return { tabId, leafId };
       },
       readLeafBuffer: (leafId: number) => {

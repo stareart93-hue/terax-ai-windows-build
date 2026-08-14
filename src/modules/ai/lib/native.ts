@@ -136,6 +136,31 @@ export type GitBranchListResult = {
   branches: GitBranchEntry[];
 };
 
+export type GitBaselineInfo = {
+  baselineRef: string | null;
+  remote: string | null;
+};
+
+export type GitRemoteBranchListResult = { branches: string[] };
+
+export type GitWorktreeCreateResult = {
+  branch: string;
+  worktreePath: string;
+};
+
+export type GitReviewFile = {
+  path: string;
+  originalPath: string | null;
+  status: string;
+};
+
+export type GitReviewStatusResult = {
+  files: GitReviewFile[];
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+};
+
 export const native = {
   workspaceCurrentDir: () => invoke<string>("workspace_current_dir"),
   workspaceAuthorize: (path: string) =>
@@ -273,11 +298,17 @@ export const native = {
       repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
-  gitDiff: (repoRoot: string, path: string | null, staged: boolean) =>
+  gitDiff: (
+    repoRoot: string,
+    path: string | null,
+    staged: boolean,
+    baseRef?: string | null,
+  ) =>
     invoke<GitDiffResult>("git_diff", {
       repoRoot,
       path,
       staged,
+      baseRef: baseRef ?? null,
       workspace: currentWorkspaceEnv(),
     }),
   gitDiffContent: (
@@ -285,12 +316,14 @@ export const native = {
     path: string,
     staged: boolean,
     originalPath?: string | null,
+    baseRef?: string | null,
   ) =>
     invoke<GitDiffContentResult>("git_diff_content", {
       repoRoot,
       path,
       staged,
       originalPath: originalPath ?? null,
+      baseRef: baseRef ?? null,
       workspace: currentWorkspaceEnv(),
     }),
   gitStage: (repoRoot: string, paths: string[]) =>
@@ -409,6 +442,42 @@ export const native = {
     invoke<void>("git_checkout_branch", {
       repoRoot,
       branch,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitDefaultBaseline: (repoRoot: string) =>
+    invoke<GitBaselineInfo>("git_default_baseline", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitListRemoteBranches: (repoRoot: string) =>
+    invoke<GitRemoteBranchListResult>("git_list_remote_branches", {
+      repoRoot,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitWorktreeCreate: (repoRoot: string, branch: string, startRef?: string | null) =>
+    invoke<GitWorktreeCreateResult>("git_worktree_create", {
+      repoRoot,
+      branch,
+      startRef: startRef ?? null,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitWorktreeRemove: (
+    repoRoot: string,
+    path: string,
+    deleteBranch: boolean,
+    force: boolean,
+  ) =>
+    invoke<void>("git_worktree_remove", {
+      repoRoot,
+      path,
+      deleteBranch,
+      force,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitReviewStatus: (repoRoot: string, baseRef: string) =>
+    invoke<GitReviewStatusResult>("git_review_status", {
+      repoRoot,
+      baseRef,
       workspace: currentWorkspaceEnv(),
     }),
 };

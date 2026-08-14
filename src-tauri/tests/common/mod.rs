@@ -51,6 +51,43 @@ impl GitRepoFixture {
         }
         std::fs::write(&p, content).expect("write file");
     }
+
+    /// Bare clone of the fixture repo registered as `origin`, with
+    /// refs/remotes/origin/HEAD pointing at main so baseline resolution sees a
+    /// remote default. Keep the returned TempDir alive for the test duration.
+    pub fn setup_origin(&self) -> TempDir {
+        let tmp = TempDir::new().expect("tempdir");
+        let bare = tmp.path().join("origin.git");
+        let out = Command::new("git")
+            .args(["clone", "--bare", "-q"])
+            .arg(&self.repo_path)
+            .arg(&bare)
+            .output()
+            .expect("git on PATH");
+        assert!(
+            out.status.success(),
+            "git clone --bare failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        self.run_git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+        self.run_git(&["fetch", "-q", "origin"]);
+        self.run_git(&["remote", "set-head", "origin", "main"]);
+        tmp
+    }
+}
+
+pub fn git_output(cwd: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git on PATH");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn run_git_in(cwd: &Path, args: &[&str]) {

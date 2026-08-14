@@ -203,8 +203,9 @@ fn diff_shows_worktree_change() {
     fx.run_git(&["commit", "-q", "-m", "init"]);
     fx.write_file("a.txt", "alpha\nbeta\n");
 
-    let diff = operations::diff(&fx.registry, &fx.repo_str(), None, false, &fx.workspace)
-        .expect("diff");
+    let diff =
+        operations::diff(&fx.registry, &fx.repo_str(), None, false, None, &fx.workspace)
+            .expect("diff");
     assert!(diff.diff_text.contains("+beta"));
 }
 
@@ -221,8 +222,9 @@ fn diff_staged_only_shows_index_change() {
     fx.run_git(&["add", "a.txt"]);
     fx.write_file("a.txt", "alpha\nbeta\ngamma\n");
 
-    let staged = operations::diff(&fx.registry, &fx.repo_str(), None, true, &fx.workspace)
-        .expect("staged diff");
+    let staged =
+        operations::diff(&fx.registry, &fx.repo_str(), None, true, None, &fx.workspace)
+            .expect("staged diff");
     assert!(staged.diff_text.contains("+beta"));
     assert!(!staged.diff_text.contains("+gamma"));
 }
@@ -745,3 +747,236 @@ fn merge_state_clean_on_quiet_repo() {
     assert!(!state.rebase_in_progress);
 }
 
+
+#[test]
+fn default_baseline_falls_back_to_local_main() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let info =
+        operations::default_baseline(&fx.registry, &fx.repo_str(), &fx.workspace).expect("baseline");
+    assert_eq!(info.baseline_ref.as_deref(), Some("main"));
+    assert!(info.remote.is_none());
+}
+
+#[test]
+fn default_baseline_prefers_origin_head() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    let _origin = fx.setup_origin();
+
+    let info =
+        operations::default_baseline(&fx.registry, &fx.repo_str(), &fx.workspace).expect("baseline");
+    assert_eq!(info.baseline_ref.as_deref(), Some("origin/main"));
+    assert_eq!(info.remote.as_deref(), Some("origin"));
+}
+
+#[test]
+fn list_remote_branches_lists_origin_refs_without_head() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    let _origin = fx.setup_origin();
+
+    let result = operations::list_remote_branches(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("list_remote_branches");
+    assert!(result.branches.iter().any(|b| b == "origin/main"));
+    assert!(result
+        .branches
+        .iter()
+        .all(|b| !b.ends_with("/HEAD")));
+}
+
+#[test]
+fn worktree_create_creates_sibling_branch_and_authorizes() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let result = operations::worktree_create(&fx.registry, &fx.repo_str(), "fix-login", None, &fx.workspace)
+        .expect("worktree_create");
+    assert_eq!(result.branch, "fix-login");
+    assert!(result.worktree_path.ends_with("-fix-login"), "sibling naming, got {}", result.worktree_path);
+
+    let wt_local = std::fs::canonicalize(&result.worktree_path).unwrap();
+    assert!(wt_local.is_dir());
+    assert!(fx.registry.is_authorized(&wt_local), "created path must be authorized");
+    assert_eq!(
+        common::git_output(&wt_local, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "fix-login"
+    );
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &result.worktree_path, true, true, &fx.workspace)
+        .expect("cleanup worktree_remove");
+    assert!(!wt_local.exists());
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/fix-login"])
+        .current_dir(&fx.repo_path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "branch must be deleted");
+}
+
+#[test]
+fn worktree_create_rejects_unsafe_branch_names() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    for bad in ["", "-f", "--force", "a..b", "a:b", "a b"] {
+        match operations::worktree_create(&fx.registry, &fx.repo_str(), bad, None, &fx.workspace) {
+            Err(GitError::InvalidInput(_)) => {}
+            other => panic!("expected InvalidInput for {bad:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn worktree_create_rejects_existing_branch() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    fx.run_git(&["branch", "feature"]);
+
+    match operations::worktree_create(&fx.registry, &fx.repo_str(), "feature", None, &fx.workspace) {
+        Err(GitError::InvalidInput(msg)) => {
+            assert!(msg.contains("already exists"), "message: {msg}");
+        }
+        other => panic!("expected InvalidInput, got {other:?}"),
+    }
+}
+
+#[test]
+fn worktree_create_with_remote_start_sets_upstream() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    let _origin = fx.setup_origin();
+
+    let result = operations::worktree_create(&fx.registry, &fx.repo_str(), "fix", None, &fx.workspace)
+        .expect("worktree_create");
+    assert_eq!(
+        common::git_output(&fx.repo_path, &["config", "branch.fix.remote"]),
+        "origin",
+        "baseline start must set upstream tracking"
+    );
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &result.worktree_path, true, true, &fx.workspace)
+        .expect("cleanup");
+}
+
+#[test]
+fn worktree_remove_rejects_unregistered_and_main_paths() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let stranger = fx.repo_path.join("not-a-worktree");
+    std::fs::create_dir_all(&stranger).unwrap();
+    match operations::worktree_remove(&fx.registry, &fx.repo_str(), &to_canon(&stranger), true, true, &fx.workspace) {
+        Err(GitError::InvalidInput(_)) => {}
+        other => panic!("expected InvalidInput for non-worktree dir, got {other:?}"),
+    }
+
+    match operations::worktree_remove(&fx.registry, &fx.repo_str(), &fx.repo_str(), true, true, &fx.workspace) {
+        Err(GitError::InvalidInput(msg)) => {
+            assert!(msg.contains("main worktree"), "message: {msg}");
+        }
+        other => panic!("expected InvalidInput for main worktree, got {other:?}"),
+    }
+}
+
+#[test]
+fn review_status_lists_committed_and_uncommitted_changes_vs_baseline() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "one\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let wt = operations::worktree_create(&fx.registry, &fx.repo_str(), "feature", Some("main"), &fx.workspace)
+        .expect("worktree_create");
+    let wt_local = std::fs::canonicalize(&wt.worktree_path).unwrap();
+    std::fs::write(wt_local.join("b.txt"), "new file\n").unwrap();
+    common::git_output(&wt_local, &["add", "b.txt"]);
+    common::git_output(&wt_local, &["commit", "-q", "-m", "feat"]);
+    std::fs::write(wt_local.join("a.txt"), "one\ntwo\n").unwrap();
+
+    let rs = operations::review_status(&fx.registry, &wt.worktree_path, "main", &fx.workspace)
+        .expect("review_status");
+    assert_eq!(rs.files_changed, 2);
+    assert!(rs.additions >= 2, "additions counted, got {}", rs.additions);
+    let a = rs.files.iter().find(|f| f.path == "a.txt").expect("a.txt listed");
+    assert_eq!(a.status, "M");
+    assert!(rs.files.iter().any(|f| f.path == "b.txt" && f.status == "A"));
+
+    let dc = operations::diff_content(&fx.registry, &wt.worktree_path, "a.txt", false, None, Some("main"), &fx.workspace)
+        .expect("diff_content");
+    assert_eq!(dc.original_content, "one\n");
+    assert_eq!(dc.modified_content, "one\ntwo\n");
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &wt.worktree_path, true, true, &fx.workspace)
+        .expect("cleanup");
+}
+
+#[test]
+fn review_survives_unborn_head_in_fresh_worktree() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "one\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let wt = operations::worktree_create(&fx.registry, &fx.repo_str(), "fresh", Some("main"), &fx.workspace)
+        .expect("worktree_create");
+    let wt_local = std::fs::canonicalize(&wt.worktree_path).unwrap();
+    std::fs::write(wt_local.join("a.txt"), "one\nedited\n").unwrap();
+
+    // No commits on the branch yet: the three-dot diff cannot resolve a merge
+    // base, so both surfaces must fall back to the base commit itself.
+    let rs = operations::review_status(&fx.registry, &wt.worktree_path, "main", &fx.workspace)
+        .expect("review_status");
+    assert!(rs.files.iter().any(|f| f.path == "a.txt" && f.status == "M"));
+
+    let dc = operations::diff_content(&fx.registry, &wt.worktree_path, "a.txt", false, None, Some("main"), &fx.workspace)
+        .expect("diff_content");
+    assert_eq!(dc.original_content, "one\n");
+    assert_eq!(dc.modified_content, "one\nedited\n");
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &wt.worktree_path, true, true, &fx.workspace)
+        .expect("cleanup");
+}

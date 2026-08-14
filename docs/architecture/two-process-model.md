@@ -85,6 +85,9 @@ All git commands are gated through the workspace authorization registry.
 - `git_log` / `git_show_commit` / `git_commit_files` / `git_commit_file_diff`
 - `git_remote_url`
 - `git_list_branches` / `git_checkout_branch`
+- `git_default_baseline` / `git_list_remote_branches` - baseline ref resolution (origin/HEAD, else local main/master/develop) and remote branch listing
+- `git_worktree_create` / `git_worktree_remove` - worktree lifecycle; create makes a sibling dir from the baseline and authorizes it, remove only accepts paths registered in `git worktree list`
+- `git_review_status` - file list and shortstat of everything changed vs a base ref (merge-base to working tree)
 
 ### Shell (`src-tauri/src/modules/shell/`)
 

@@ -45,6 +45,7 @@ export type CommandPaletteActionContext = {
   openNewPreview: () => void;
   openGitGraph: () => void;
   toggleSourceControl: () => void;
+  openNewWorktree: () => void;
   closeActiveTabOrPane: () => void;
   splitPaneRight: () => void;
   splitPaneDown: () => void;
@@ -226,6 +227,22 @@ export function createCommandItems(
       icon: SourceCodeIcon,
       shortcutId: "pane.source",
       run: ctx.toggleSourceControl,
+    },
+    {
+      id: "git.newWorktree",
+      title: "New worktree",
+      group: "Git",
+      keywords: [
+        "git",
+        "worktree",
+        "branch",
+        "claude",
+        "agent",
+        "isolate",
+        "parallel",
+      ],
+      icon: SourceCodeIcon,
+      run: ctx.openNewWorktree,
     },
     {
       id: "search.content",
