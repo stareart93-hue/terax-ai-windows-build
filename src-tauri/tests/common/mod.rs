@@ -58,9 +58,13 @@ impl GitRepoFixture {
     pub fn setup_origin(&self) -> TempDir {
         let tmp = TempDir::new().expect("tempdir");
         let bare = tmp.path().join("origin.git");
+        // Windows paths (C:\...) passed bare to clone/remote are parsed as
+        // remote URLs ("hostname contains invalid characters"); file:// URLs
+        // work identically on both platforms.
+        let bare_url = file_url(&bare);
         let out = Command::new("git")
             .args(["clone", "--bare", "-q"])
-            .arg(&self.repo_path)
+            .arg(file_url(&self.repo_path))
             .arg(&bare)
             .output()
             .expect("git on PATH");
@@ -69,10 +73,19 @@ impl GitRepoFixture {
             "git clone --bare failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        self.run_git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+        self.run_git(&["remote", "add", "origin", bare_url.as_str()]);
         self.run_git(&["fetch", "-q", "origin"]);
         self.run_git(&["remote", "set-head", "origin", "main"]);
         tmp
+    }
+}
+
+fn file_url(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
     }
 }
 
