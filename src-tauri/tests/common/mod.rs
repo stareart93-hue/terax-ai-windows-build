@@ -81,7 +81,11 @@ impl GitRepoFixture {
 }
 
 fn file_url(path: &Path) -> String {
-    let s = path.to_string_lossy().replace('\\', "/");
+    let raw = path.to_string_lossy();
+    // canonicalize() on Windows returns verbatim \\?\ paths; git rejects those
+    // inside file:// URLs.
+    let trimmed = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
+    let s = trimmed.replace('\\', "/");
     if s.starts_with('/') {
         format!("file://{s}")
     } else {
