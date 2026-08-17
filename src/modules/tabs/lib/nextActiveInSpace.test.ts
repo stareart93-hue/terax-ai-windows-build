@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  nextActiveAfterEditorClose,
   nextActiveInSpace,
   previewReturnTarget,
   returnTargetForNewPreview,
@@ -62,6 +63,48 @@ describe("nextActiveInSpace", () => {
 
   it("returns null for an unknown id", () => {
     expect(nextActiveInSpace([term(1, "a")], 99)).toBeNull();
+  });
+});
+
+describe("nextActiveAfterEditorClose", () => {
+  it("returns to the previously active editor, skipping a more recent terminal", () => {
+    const tabs = [term(1, "a"), editor(2, "a"), editor(3, "a")];
+    // terminal 1 was viewed after editor 2; closing 3 must still land on 2
+    expect(nextActiveAfterEditorClose(tabs, 3, [3, 1, 2])).toBe(2);
+  });
+
+  it("walks the MRU list until an editor in the same space is found", () => {
+    const tabs = [
+      term(1, "a"),
+      editor(2, "a"),
+      term(3, "b"),
+      editor(4, "a"),
+      editor(5, "a"),
+    ];
+    // 4 and 2 are the editor history in space a, newest first
+    expect(nextActiveAfterEditorClose(tabs, 5, [5, 3, 4, 1, 2])).toBe(4);
+    expect(nextActiveAfterEditorClose(tabs, 4, [4, 3, 1, 2])).toBe(2);
+  });
+
+  it("falls back to the strip neighbor when the MRU has no editor", () => {
+    const tabs = [term(1, "a"), editor(2, "a"), term(3, "a")];
+    expect(nextActiveAfterEditorClose(tabs, 2, [2, 1])).toBe(1);
+  });
+
+  it("never jumps into another space and refuses the last tab of a space", () => {
+    const tabs = [term(1, "b"), editor(2, "a")];
+    expect(nextActiveAfterEditorClose(tabs, 2, [2, 1])).toBeNull();
+    expect(nextActiveAfterEditorClose(tabs, 2, [2])).toBeNull();
+  });
+
+  it("keeps the neighbor rule for non-editor tabs", () => {
+    const tabs = [term(1, "a"), term(2, "a")];
+    expect(nextActiveAfterEditorClose(tabs, 2, [2, 1])).toBe(1);
+  });
+
+  it("ignores stale ids that no longer resolve to a tab", () => {
+    const tabs = [term(1, "a"), editor(2, "a"), editor(3, "a")];
+    expect(nextActiveAfterEditorClose(tabs, 3, [3, 99, 2])).toBe(2);
   });
 });
 

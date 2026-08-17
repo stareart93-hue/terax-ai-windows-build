@@ -180,6 +180,30 @@ export function nextActiveInSpace(
   return (sameSpace[idx - 1] ?? sameSpace[idx + 1]).id;
 }
 
+// Closing an editor returns to the previously active editor (MRU order,
+// skipping the terminal that is often more recent), not the strip neighbor.
+// `mru` is activation history, most-recent-first; ids may include closed tabs.
+export function nextActiveAfterEditorClose(
+  tabs: Tab[],
+  closingId: number,
+  mru: number[],
+): number | null {
+  const closing = tabs.find((t) => t.id === closingId);
+  if (!closing) return null;
+  if (closing.kind !== "editor") return nextActiveInSpace(tabs, closingId);
+  const sameSpace = tabs.filter((t) => t.spaceId === closing.spaceId);
+  if (sameSpace.length <= 1) return null;
+  const byId = new Map(tabs.map((t) => [t.id, t] as const));
+  for (const id of mru) {
+    if (id === closingId) continue;
+    const t = byId.get(id);
+    if (!t || t.spaceId !== closing.spaceId || t.kind !== "editor") continue;
+    return id;
+  }
+  const idx = sameSpace.findIndex((t) => t.id === closingId);
+  return (sameSpace[idx - 1] ?? sameSpace[idx + 1]).id;
+}
+
 export function previewReturnTarget(
   tabs: Tab[],
   closing: EditorTab,
@@ -295,6 +319,9 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   const activeSpaceIdRef = useRef(DEFAULT_SPACE_ID);
   const tabsRef = useRef(tabs);
   const activeIdRef = useRef(activeId);
+  // Activation history, most-recent-first. Pruned on tab removal; feeds the
+  // switcher HUD and the close-an-editor return target.
+  const mruRef = useRef<number[]>([activeId]);
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -302,7 +329,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
 
   useEffect(() => {
     activeIdRef.current = activeId;
+    mruRef.current = [activeId, ...mruRef.current.filter((id) => id !== activeId)];
   }, [activeId]);
+
+  useEffect(() => {
+    const live = new Set(tabs.map((t) => t.id));
+    mruRef.current = mruRef.current.filter((id) => live.has(id));
+  }, [tabs]);
 
   // Activating a cold tab warms it: one choke point for every activation path.
   useEffect(() => {
@@ -944,9 +977,12 @@ export function useTabs(initial?: Partial<TerminalTab>) {
   const closeTab = useCallback((id: number) => {
     let toDispose: number[] = [];
     setTabs((curr) => {
-      const fallback = nextActiveInSpace(curr, id);
-      if (fallback === null) return curr;
       const target = curr.find((t) => t.id === id);
+      const fallback =
+        target?.kind === "editor"
+          ? nextActiveAfterEditorClose(curr, id, mruRef.current)
+          : nextActiveInSpace(curr, id);
+      if (fallback === null) return curr;
       if (target?.kind === "terminal") {
         toDispose = leafIds(target.paneTree);
       }
@@ -1204,10 +1240,13 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     setTabs((prev) => reorderTabsByGap(prev, fromId, toGapIndex));
   }, []);
 
+  const getMruOrder = useCallback(() => [...mruRef.current], []);
+
   return {
     tabs,
     activeId,
     setActiveId,
+    getMruOrder,
     allocId,
     replaceTabs,
     moveTabToSpace,

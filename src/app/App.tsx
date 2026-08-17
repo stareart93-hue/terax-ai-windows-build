@@ -118,6 +118,7 @@ export default function App() {
     tabs,
     activeId,
     setActiveId,
+    getMruOrder,
     allocId,
     replaceTabs,
     reorderTabByGap,
@@ -427,28 +428,16 @@ export default function App() {
 
   // Most-recently-used tab ids, most recent first, pruned to live tabs. Drives
   // the Ctrl+Tab quick switcher so it cycles by recency, not strip order.
-  const mruRef = useRef<number[]>([activeId]);
-  useEffect(() => {
-    mruRef.current = [
-      activeId,
-      ...mruRef.current.filter((id) => id !== activeId),
-    ];
-  }, [activeId]);
-  useEffect(() => {
-    const live = new Set(tabs.map((t) => t.id));
-    mruRef.current = mruRef.current.filter((id) => live.has(id));
-  }, [tabs]);
-
   const getSwitcherOrder = useCallback(() => {
     const space = activeSpaceId ?? DEFAULT_SPACE_ID;
     const inSpace = tabsRef.current
       .filter((t) => t.spaceId === space)
       .map((t) => t.id);
     const present = new Set(inSpace);
-    const ordered = mruRef.current.filter((id) => present.has(id));
+    const ordered = getMruOrder().filter((id) => present.has(id));
     for (const id of inSpace) if (!ordered.includes(id)) ordered.push(id);
     return [activeId, ...ordered.filter((id) => id !== activeId)];
-  }, [activeId, activeSpaceId]);
+  }, [activeId, activeSpaceId, getMruOrder]);
 
   const { state: switcherState, step: stepSwitcher } = useTabSwitcher({
     getOrder: getSwitcherOrder,
