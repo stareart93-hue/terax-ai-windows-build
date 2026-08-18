@@ -173,6 +173,8 @@ export type Preferences = {
   lspCustomServers: LspCustomServer[];
   /** Canonical repo root -> baseline ref new worktrees branch from. */
   worktreeBaseline: Record<string, string>;
+  /** Git diff pane layout, shared by every diff surface. */
+  diffLayout: "unified" | "split";
 };
 
 export type EditorFormatter =
@@ -261,6 +263,7 @@ const KEY_EDITOR_CUSTOM_FORMAT_COMMAND = "editorCustomFormatCommand";
 const KEY_LSP_ACTIVATION = "lspActivation";
 const KEY_LSP_CUSTOM_SERVERS = "lspCustomServers";
 const KEY_WORKTREE_BASELINE = "worktreeBaseline";
+const KEY_DIFF_LAYOUT = "diffLayout";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_FONT_SIZE_MIN = 8;
@@ -343,6 +346,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   lspActivation: {},
   lspCustomServers: [],
   worktreeBaseline: {},
+  diffLayout: "unified",
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
@@ -533,7 +537,15 @@ export async function loadPreferences(): Promise<Preferences> {
     worktreeBaseline:
       get<Record<string, string>>(KEY_WORKTREE_BASELINE) ??
       DEFAULT_PREFERENCES.worktreeBaseline,
+    diffLayout:
+      get<"unified" | "split">(KEY_DIFF_LAYOUT) ?? DEFAULT_PREFERENCES.diffLayout,
   };
+}
+
+export async function setDiffLayout(
+  value: "unified" | "split",
+): Promise<void> {
+  await writePref(KEY_DIFF_LAYOUT, value);
 }
 
 export async function setWorktreeBaseline(
@@ -934,6 +946,7 @@ export async function onPreferencesChange(
     [KEY_LSP_ACTIVATION]: "lspActivation",
     [KEY_LSP_CUSTOM_SERVERS]: "lspCustomServers",
     [KEY_WORKTREE_BASELINE]: "worktreeBaseline",
+    [KEY_DIFF_LAYOUT]: "diffLayout",
   };
   // Same-process writes still fire onChange immediately; cross-window writes
   // arrive via the Tauri event emitted by writePref().

@@ -13,8 +13,8 @@ use crate::modules::git::types::{
     DiscardEntry, GitBaselineInfo, GitBranchEntry, GitBranchListResult, GitCommitFileChange,
     GitCommitResult, GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput,
     GitPanelSnapshot, GitPushResult, GitRemoteBranchListResult, GitRepoInfo, GitReviewFile,
-    GitReviewStatusResult, GitStatusSnapshot, GitWorktreeCreateResult, TextSource,
-    DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
+    GitReviewStatusResult, GitStatusSnapshot, GitWorktreeCreateResult, GitWorktreeStatusEntry,
+    TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
     authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream,
@@ -1837,6 +1837,65 @@ fn run_diff_against_commit(
         args,
         DEFAULT_TIMEOUT_SECS,
     )
+}
+
+/// Linked worktrees of this repository with their checked-out branch and
+/// changed-file count, for the worktree overview. Bounded to the first
+/// MAX_WORKTREE_OVERVIEW entries to keep the single IPC call cheap.
+pub fn worktree_list_status(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<Vec<GitWorktreeStatusEntry>> {
+    const MAX_WORKTREE_OVERVIEW: usize = 16;
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let common_dir = git_stdout_line_opt(
+        &repo_root.workspace,
+        &repo_root.git_path,
+        ["rev-parse", "--git-common-dir"],
+    )?;
+    let main_root = common_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|cd| {
+            let cd_path = Path::new(cd);
+            if cd_path.is_absolute() {
+                cd_path.parent().map(|p| p.to_string_lossy().into_owned())
+            } else {
+                Some(repo_root.git_path.clone())
+            }
+        });
+    let main_key = main_root.as_deref().and_then(|m| worktree_key(m, workspace));
+
+    let mut out = Vec::new();
+    for entry in list_worktree_entries(&repo_root)? {
+        if out.len() >= MAX_WORKTREE_OVERVIEW {
+            break;
+        }
+        if entry.bare {
+            continue;
+        }
+        let Some(key) = worktree_key(&entry.path, workspace) else {
+            continue;
+        };
+        if main_key.as_deref() == Some(key.as_str()) {
+            continue;
+        }
+        let dirty = match canonical_dir(registry, &entry.path, workspace) {
+            Ok(resolved) => status_inner(&resolved)
+                .map(|s| s.changed_files.len() as u32)
+                .unwrap_or(0),
+            Err(_) => 0,
+        };
+        out.push(GitWorktreeStatusEntry {
+            worktree_path: key,
+            branch: entry.branch,
+            dirty,
+        });
+    }
+    Ok(out)
 }
 
 fn parse_diff_name_status(bytes: &[u8]) -> Vec<GitReviewFile> {

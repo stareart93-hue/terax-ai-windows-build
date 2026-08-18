@@ -21,3 +21,11 @@ export function previewWorktreePath(repoRoot: string, branch: string): string {
   if (!seg) return norm;
   return `${parent}/${name}-${seg}`;
 }
+
+/** Race naming: the first worktree keeps the name, the rest get -2, -3, ... */
+export function branchNamesForRace(branch: string, count: number): string[] {
+  const base = sanitizeBranchName(branch);
+  if (!base || count <= 0) return [];
+  const n = Math.min(count, 4);
+  return Array.from({ length: n }, (_, i) => (i === 0 ? base : `${base}-${i + 1}`));
+}

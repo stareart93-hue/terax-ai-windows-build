@@ -1,3 +1,4 @@
 export { AgentNotificationsBridge } from "./components/AgentNotificationsBridge";
 export { NotificationBell } from "./components/NotificationBell";
-export { nextAttentionTarget } from "./store/agentStore";
+export { launchClaudeTerminal } from "./lib/launchClaude";
+export { nextAttentionTarget, useAgentStore } from "./store/agentStore";

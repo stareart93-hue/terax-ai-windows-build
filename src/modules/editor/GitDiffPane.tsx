@@ -1,11 +1,18 @@
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import { unifiedMergeView } from "@codemirror/merge";
+import {
+  goToNextChunk,
+  goToPreviousChunk,
+  MergeView,
+  unifiedMergeView,
+} from "@codemirror/merge";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { setDiffLayout } from "@/modules/settings/store";
 import {
   commitDiffKey,
   fetchCommitDiff,
@@ -111,6 +118,12 @@ function countDiffLines(patch: string): { added: number; removed: number } {
   if (patch.length > 0 && patch.charCodeAt(0) === 43) added++;
   else if (patch.length > 0 && patch.charCodeAt(0) === 45) removed++;
   return { added, removed };
+}
+
+/** Approximation of `git diff -w` for the merge view: drop trailing spaces
+ * per line so whitespace-only churn stops polluting the chunk list. */
+function stripTrailingWhitespace(content: string): string {
+  return content.replace(/[ \t]+(?=\n)/g, "").replace(/[ \t]+$/, "");
 }
 
 type LoadState =
@@ -234,6 +247,20 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
     modifiedContent.length > LARGE_FILE_THRESHOLD;
   const useFallback = isBinary || isTooLarge;
 
+  const diffLayout = usePreferencesStore((s) => s.diffLayout);
+  const [ignoreWs, setIgnoreWs] = useState(false);
+  const splitHostRef = useRef<HTMLDivElement>(null);
+  const mergeViewRef = useRef<MergeView | null>(null);
+
+  const displayOriginal = useMemo(() => {
+    const norm = normalizeForDiff(originalContent);
+    return ignoreWs ? stripTrailingWhitespace(norm) : norm;
+  }, [originalContent, ignoreWs]);
+  const displayModified = useMemo(() => {
+    const norm = normalizeForDiff(modifiedContent);
+    return ignoreWs ? stripTrailingWhitespace(norm) : norm;
+  }, [modifiedContent, ignoreWs]);
+
   const langExt = loaded?.langExt ?? null;
   const extensions = useMemo(
     () => [
@@ -242,7 +269,7 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
       languageCompartment.of(langExt ?? []),
       ...READONLY_EXT,
       unifiedMergeView({
-        original: normalizeForDiff(originalContent),
+        original: displayOriginal,
         mergeControls: false,
         highlightChanges: true,
         gutter: true,
@@ -252,8 +279,58 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
       }),
       DIFF_THEME,
     ],
-    [originalContent, langExt],
+    [displayOriginal, langExt],
   );
+
+  const splitSideExt = useMemo(
+    () => (lang: Extension | null) => [
+      ...SHARED_EXT,
+      DEFAULT_INDENT,
+      languageCompartment.of(lang ?? []),
+      ...READONLY_EXT,
+      themeExt,
+      DIFF_THEME,
+    ],
+    [themeExt],
+  );
+
+  useEffect(() => {
+    if (diffLayout !== "split" || useFallback || !splitHostRef.current) {
+      return;
+    }
+    const sideExtensions = splitSideExt(langExt);
+    const view = new MergeView({
+      a: { doc: displayOriginal, extensions: sideExtensions },
+      b: { doc: displayModified, extensions: sideExtensions },
+      highlightChanges: true,
+      gutter: true,
+      collapseUnchanged: { margin: 3, minSize: 6 },
+      diffConfig: { scanLimit: DIFF_SCAN_LIMIT },
+    });
+    mergeViewRef.current = view;
+    splitHostRef.current.appendChild(view.dom);
+    return () => {
+      mergeViewRef.current = null;
+      view.destroy();
+    };
+  }, [
+    diffLayout,
+    useFallback,
+    displayOriginal,
+    displayModified,
+    langExt,
+    splitSideExt,
+  ]);
+
+  const gotoChunk = (dir: 1 | -1) => {
+    const target =
+      diffLayout === "split"
+        ? (mergeViewRef.current?.b ?? null)
+        : (cmRef.current?.view ?? null);
+    if (!target) return;
+    const ok = (dir === 1 ? goToNextChunk : goToPreviousChunk)(target);
+    if (ok) target.focus();
+  };
 
   // Cache-hit path only: the diff came from the cache before the language
   // pack was imported. Resolve and reconfigure once the view exists.
@@ -303,8 +380,8 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
             {path}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-3 text-[10.5px] tabular-nums text-muted-foreground">
-          <span className="truncate max-w-80 font-mono">{repoRoot}</span>
+        <div className="flex shrink-0 items-center gap-2 text-[10.5px] tabular-nums text-muted-foreground">
+          <span className="max-w-80 truncate font-mono">{repoRoot}</span>
           {useFallback ? (
             <>
               <span className="text-emerald-600 dark:text-emerald-400">
@@ -314,7 +391,55 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
                 −{stats.removed}
               </span>
             </>
-          ) : null}
+          ) : (
+            <>
+              <button
+                type="button"
+                title="Previous change"
+                onClick={() => gotoChunk(-1)}
+                className="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-foreground/10 hover:text-foreground"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                title="Next change"
+                onClick={() => gotoChunk(1)}
+                className="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-foreground/10 hover:text-foreground"
+              >
+                ›
+              </button>
+              <button
+                type="button"
+                title="Ignore trailing whitespace"
+                onClick={() => setIgnoreWs((v) => !v)}
+                className={
+                  "cursor-pointer rounded px-1.5 py-0.5 transition-colors hover:bg-foreground/10 hover:text-foreground " +
+                  (ignoreWs
+                    ? "bg-foreground/10 text-foreground"
+                    : "text-muted-foreground")
+                }
+              >
+                ws
+              </button>
+              <button
+                type="button"
+                title={
+                  diffLayout === "split"
+                    ? "Switch to unified layout"
+                    : "Switch to side-by-side layout"
+                }
+                onClick={() =>
+                  void setDiffLayout(
+                    diffLayout === "split" ? "unified" : "split",
+                  )
+                }
+                className="cursor-pointer rounded px-1.5 py-0.5 transition-colors hover:bg-foreground/10 hover:text-foreground"
+              >
+                {diffLayout === "split" ? "unified" : "split"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -334,10 +459,14 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
               {fallbackPatch || "Diff preview is not available for this file."}
             </pre>
           </ScrollArea>
+        ) : diffLayout === "split" ? (
+          <div className="h-full overflow-hidden [&_.cm-mergeView]:h-full [&_.cm-mergeView]:overflow-auto [&_.cm-editor]:h-full">
+            <div ref={splitHostRef} className="h-full" />
+          </div>
         ) : (
           <CodeMirror
             ref={cmRef}
-            value={normalizeForDiff(modifiedContent)}
+            value={displayModified}
             theme={themeExt}
             extensions={extensions}
             editable={false}

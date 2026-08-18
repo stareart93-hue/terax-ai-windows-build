@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { previewWorktreePath, sanitizeBranchName } from "./worktreePath";
+import {
+  branchNamesForRace,
+  previewWorktreePath,
+  sanitizeBranchName,
+} from "./worktreePath";
 
 describe("sanitizeBranchName", () => {
   it("turns spaces into dashes and trims", () => {
@@ -47,5 +51,21 @@ describe("previewWorktreePath", () => {
 
   it("falls back to the root when the branch is empty", () => {
     expect(previewWorktreePath("/home/u/terax", "  ")).toBe("/home/u/terax");
+  });
+});
+
+describe("branchNamesForRace", () => {
+  it("suffixed names for parallel worktrees", () => {
+    expect(branchNamesForRace("fix login", 3)).toEqual([
+      "fix-login",
+      "fix-login-2",
+      "fix-login-3",
+    ]);
+  });
+
+  it("caps the count at four and returns empty for bad input", () => {
+    expect(branchNamesForRace("x", 9)).toHaveLength(4);
+    expect(branchNamesForRace("  ", 3)).toEqual([]);
+    expect(branchNamesForRace("x", 0)).toEqual([]);
   });
 });

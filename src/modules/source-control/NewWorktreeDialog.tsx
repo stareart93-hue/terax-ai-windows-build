@@ -22,7 +22,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { native } from "@/modules/ai/lib/native";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { useEffect, useRef, useState } from "react";
-import { previewWorktreePath, sanitizeBranchName } from "./lib/worktreePath";
+import {
+  branchNamesForRace,
+  previewWorktreePath,
+  sanitizeBranchName,
+} from "./lib/worktreePath";
 
 export type WorktreeSessionRequest = {
   worktreePath: string;
@@ -47,6 +51,7 @@ export function NewWorktreeDialog({
   onCreated,
 }: Props) {
   const [name, setName] = useState("");
+  const [count, setCount] = useState(1);
   const [startRef, setStartRef] = useState<string | null>(null);
   const [launch, setLaunch] = useState<"claude" | "terminal">("claude");
   const [fetchFirst, setFetchFirst] = useState(true);
@@ -68,6 +73,7 @@ export function NewWorktreeDialog({
   useEffect(() => {
     if (!open || !repoRoot) return;
     setName("");
+    setCount(1);
     setLaunch("claude");
     setFetchFirst(true);
     setPrompt("");
@@ -127,14 +133,20 @@ export function NewWorktreeDialog({
     try {
       if (fetchFirst) await native.gitFetch(repoRoot);
       setBusy("creating");
-      const result = await native.gitWorktreeCreate(repoRoot, branch, startRef);
-      await native.workspaceAuthorize(result.worktreePath).catch(() => {});
-      onCreated({
-        worktreePath: result.worktreePath,
-        branch: result.branch,
-        claude: launch === "claude",
-        prompt,
-      });
+      for (const branchName of branchNamesForRace(branch, count)) {
+        const result = await native.gitWorktreeCreate(
+          repoRoot,
+          branchName,
+          startRef,
+        );
+        await native.workspaceAuthorize(result.worktreePath).catch(() => {});
+        onCreated({
+          worktreePath: result.worktreePath,
+          branch: result.branch,
+          claude: launch === "claude",
+          prompt,
+        });
+      }
       onOpenChange(false);
     } catch (e) {
       setError(String(e));
@@ -254,6 +266,36 @@ export function NewWorktreeDialog({
                 className="resize-none text-[12.5px]"
               />
             </div>
+          )}
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium">
+              Parallel worktrees
+            </span>
+            <div className="flex items-center gap-1">
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={busy !== "idle"}
+                  onClick={() => setCount(n)}
+                  title={n === 1 ? "One worktree" : `Race ${n} agents on the same task`}
+                  className={
+                    "h-6 w-7 cursor-pointer rounded-md border text-[11px] font-semibold tabular-nums transition-colors disabled:cursor-default disabled:opacity-50 " +
+                    (count === n
+                      ? "border-primary/60 bg-primary/10 text-foreground"
+                      : "border-border/60 text-muted-foreground hover:bg-foreground/[0.05]")
+                  }
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          {count > 1 && branch && (
+            <span className="font-mono text-[10.5px] text-muted-foreground">
+              {branchNamesForRace(branch, count).join(", ")}
+            </span>
           )}
 
           <div className="flex cursor-pointer items-center gap-2 text-xs">

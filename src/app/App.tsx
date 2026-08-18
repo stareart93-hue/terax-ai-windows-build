@@ -15,6 +15,7 @@ import { isMarkdownPath } from "@/lib/utils";
 import {
   AgentNotificationsBridge,
   nextAttentionTarget,
+  useAgentStore,
 } from "@/modules/agents";
 import {
   AgentRunBridge,
@@ -679,6 +680,28 @@ export default function App() {
     cycleSidebarView("source-control");
     useWorktreeDialogStore.getState().openDialog(root);
   }, [sourceControl.repo, cycleSidebarView]);
+
+  const agentSessions = useAgentStore((s) => s.sessions);
+  const getWorktreeAgent = useCallback(
+    (worktreePath: string) => {
+      const norm = worktreePath.replace(/\\/g, "/").replace(/\/+$/, "");
+      for (const session of Object.values(agentSessions)) {
+        const tab = tabsRef.current.find(
+          (t) =>
+            t.kind === "terminal" && hasLeaf(t.paneTree, session.leafId),
+        );
+        if (tab?.kind !== "terminal") continue;
+        const cwd = findLeafCwd(tab.paneTree, session.leafId) ?? tab.cwd;
+        if (!cwd) continue;
+        const c = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+        if (c === norm || c.startsWith(`${norm}/`)) {
+          return { agent: session.agent, status: session.status };
+        }
+      }
+      return null;
+    },
+    [agentSessions],
+  );
   const explorerGitDecorations = usePreferencesStore(
     (s) => s.explorerGitDecorations,
   );
@@ -1337,6 +1360,7 @@ export default function App() {
                           onOpenFile={handleOpenFile}
                           onNavigateToPath={cdInNewTab}
                           onOpenWorktreeSession={openWorktreeSession}
+                          getWorktreeAgent={getWorktreeAgent}
                         />
                       </ErrorBoundary>
                     )}

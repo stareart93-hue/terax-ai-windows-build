@@ -980,3 +980,34 @@ fn review_survives_unborn_head_in_fresh_worktree() {
     operations::worktree_remove(&fx.registry, &fx.repo_str(), &wt.worktree_path, true, true, &fx.workspace)
         .expect("cleanup");
 }
+
+#[test]
+fn worktree_list_status_reports_branch_and_dirty_counts() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+
+    let clean = operations::worktree_create(&fx.registry, &fx.repo_str(), "clean-wt", Some("main"), &fx.workspace)
+        .expect("create clean");
+    let dirty = operations::worktree_create(&fx.registry, &fx.repo_str(), "dirty-wt", Some("main"), &fx.workspace)
+        .expect("create dirty");
+    let dirty_local = std::fs::canonicalize(&dirty.worktree_path).unwrap();
+    std::fs::write(dirty_local.join("a.txt"), "changed\n").unwrap();
+    std::fs::write(dirty_local.join("new.txt"), "untracked\n").unwrap();
+
+    let list = operations::worktree_list_status(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("list status");
+    // the main worktree itself must not appear
+    assert!(list.iter().all(|e| !e.worktree_path.contains("dirty-wt") || e.worktree_path.ends_with("dirty-wt")));
+    let clean_entry = list.iter().find(|e| e.branch.as_deref() == Some("clean-wt")).expect("clean listed");
+    assert_eq!(clean_entry.dirty, 0);
+    let dirty_entry = list.iter().find(|e| e.branch.as_deref() == Some("dirty-wt")).expect("dirty listed");
+    assert_eq!(dirty_entry.dirty, 2, "modified + untracked both count");
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &clean.worktree_path, true, true, &fx.workspace).unwrap();
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &dirty.worktree_path, true, true, &fx.workspace).unwrap();
+}

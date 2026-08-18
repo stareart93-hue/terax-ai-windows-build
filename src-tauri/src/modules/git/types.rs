@@ -153,6 +153,14 @@ pub struct GitWorktreeCreateResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitWorktreeStatusEntry {
+    pub worktree_path: String,
+    pub branch: Option<String>,
+    pub dirty: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitReviewFile {
     pub path: String,
     pub original_path: Option<String>,

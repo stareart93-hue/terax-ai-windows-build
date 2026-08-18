@@ -148,6 +148,12 @@ export type GitWorktreeCreateResult = {
   worktreePath: string;
 };
 
+export type GitWorktreeStatusEntry = {
+  worktreePath: string;
+  branch: string | null;
+  dirty: number;
+};
+
 export type GitReviewFile = {
   path: string;
   originalPath: string | null;
@@ -472,6 +478,11 @@ export const native = {
       path,
       deleteBranch,
       force,
+      workspace: currentWorkspaceEnv(),
+    }),
+  gitWorktreeListStatus: (repoRoot: string) =>
+    invoke<GitWorktreeStatusEntry[]>("git_worktree_list_status", {
+      repoRoot,
       workspace: currentWorkspaceEnv(),
     }),
   gitReviewStatus: (repoRoot: string, baseRef: string) =>

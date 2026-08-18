@@ -335,6 +335,7 @@ pub fn run() {
             git::commands::git_list_remote_branches,
             git::commands::git_worktree_create,
             git::commands::git_worktree_remove,
+            git::commands::git_worktree_list_status,
             git::commands::git_review_status,
             shell::shell_run_command,
             shell::shell_session_open,

@@ -5,7 +5,7 @@ use crate::modules::git::types::{
     DiscardEntry, GitBaselineInfo, GitBranchListResult, GitCommitFileChange, GitCommitResult,
     GitDiffContentResult, GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPushResult,
     GitRemoteBranchListResult, GitRepoInfo, GitReviewStatusResult, GitStatusSnapshot,
-    GitWorktreeCreateResult,
+    GitWorktreeCreateResult, GitWorktreeStatusEntry,
 };
 use crate::modules::workspace::{WorkspaceEnv, WorkspaceRegistry};
 
@@ -445,6 +445,19 @@ pub async fn git_worktree_remove(
     blocking(app, move |r| {
         operations::worktree_remove(r, &repo_root, &path, delete_branch, force, &workspace)
             .map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_worktree_list_status(
+    repo_root: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<Vec<GitWorktreeStatusEntry>, String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::worktree_list_status(r, &repo_root, &workspace).map_err(Into::into)
     })
     .await
 }

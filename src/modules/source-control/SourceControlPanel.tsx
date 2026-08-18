@@ -82,6 +82,11 @@ import type { SourceControlSummary } from "./useSourceControl";
 import { BranchReview } from "./BranchReview";
 import { useBranchReview } from "./useBranchReview";
 import {
+  WorktreeOverview,
+  type WorktreeAgentInfo,
+} from "./WorktreeOverview";
+import { useWorktreeOverview } from "./useWorktreeOverview";
+import {
   NewWorktreeDialog,
   type WorktreeSessionRequest,
 } from "./NewWorktreeDialog";
@@ -107,6 +112,7 @@ type Props = {
   onOpenFile?: (absolutePath: string) => void;
   onNavigateToPath?: (path: string) => void;
   onOpenWorktreeSession?: (request: WorktreeSessionRequest) => void;
+  getWorktreeAgent?: (path: string) => WorktreeAgentInfo;
 };
 
 const SOURCE_CONTROL_TOOLTIP_CLASS =
@@ -449,6 +455,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   onOpenFile,
   onNavigateToPath,
   onOpenWorktreeSession,
+  getWorktreeAgent,
 }: Props) {
   const scm = useSourceControlPanel(open, sourceControl, onOpenDiff);
   const refreshAnimationRef = useRef<number | null>(null);
@@ -457,8 +464,15 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const worktreeDialog = useWorktreeDialogStore();
-  const [viewMode, setViewMode] = useState<"changes" | "review">("changes");
+  const [viewMode, setViewMode] = useState<"changes" | "review" | "worktrees">(
+    "changes",
+  );
   const review = useBranchReview(open, scm.repo, viewMode === "review");
+  const worktreeOverview = useWorktreeOverview(
+    open,
+    scm.repo,
+    viewMode === "worktrees",
+  );
   const untrackedPaths = useMemo(
     () =>
       (scm.status?.changedFiles ?? [])
@@ -553,13 +567,14 @@ export const SourceControlPanel = memo(function SourceControlPanel({
       window.clearTimeout(refreshAnimationRef.current);
     }
     void review.refresh();
+    void worktreeOverview.refresh();
     void scm.refresh().finally(() => {
       refreshAnimationRef.current = window.setTimeout(() => {
         setRefreshAnimating(false);
         refreshAnimationRef.current = null;
       }, 450);
     });
-  }, [scm, review]);
+  }, [scm, review, worktreeOverview]);
 
   const handleFetch = useCallback(() => {
     void sourceControl.runRemoteAction("fetch");
@@ -903,20 +918,20 @@ export const SourceControlPanel = memo(function SourceControlPanel({
 
         {scm.panelState === "ready" && scm.status ? (
           <>
-            {review.baseline ? (
-              <div className="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-2 pt-1.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("changes")}
-                  className={cn(
-                    "cursor-pointer border-b-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors",
-                    viewMode === "changes"
-                      ? "border-primary text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  Changes
-                </button>
+            <div className="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-2 pt-1.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("changes")}
+                className={cn(
+                  "cursor-pointer border-b-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+                  viewMode === "changes"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Changes
+              </button>
+              {review.baseline ? (
                 <button
                   type="button"
                   onClick={() => setViewMode("review")}
@@ -929,15 +944,42 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 >
                   Branch review
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setViewMode("worktrees")}
+                className={cn(
+                  "cursor-pointer border-b-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+                  viewMode === "worktrees"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Worktrees
+              </button>
+            </div>
 
             {viewMode === "review" && scm.repo && review.baseline ? (
               <BranchReview
                 repoRoot={scm.repo.repoRoot}
                 review={review}
+                branch={scm.status.branch}
+                onPush={scm.push}
                 untrackedPaths={untrackedPaths}
                 onOpenDiff={onOpenDiff}
+              />
+            ) : null}
+
+            {viewMode === "worktrees" && scm.repo ? (
+              <WorktreeOverview
+                repoRoot={scm.repo.repoRoot}
+                rows={worktreeOverview.rows}
+                loading={worktreeOverview.loading}
+                error={worktreeOverview.error}
+                getWorktreeAgent={getWorktreeAgent}
+                onOpenTerminal={(path) => onNavigateToPath?.(path)}
+                onLaunchClaude={(request) => onOpenWorktreeSession?.(request)}
+                onChanged={handleRefresh}
               />
             ) : null}
 
