@@ -8,6 +8,8 @@ import {
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setWorktreeBaseline } from "@/modules/settings/store";
 
+import { useGitSignalRefresh } from "./lib/useGitSignalRefresh";
+
 export type BranchReviewState = {
   /** Effective baseline: the settings override, else the git-detected default. */
   baseline: string | null;
@@ -88,6 +90,7 @@ export function useBranchReview(
   }, [isOpen, enabled, repoRoot, baseline, token]);
 
   const refresh = useCallback(() => setToken((t) => t + 1), []);
+  useGitSignalRefresh(isOpen && enabled && !!repoRoot && !!baseline, refresh);
   const setBaseline = useCallback(
     (ref: string) => {
       if (!repoRoot || !ref) return;

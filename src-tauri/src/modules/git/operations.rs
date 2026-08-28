@@ -1839,8 +1839,9 @@ fn run_diff_against_commit(
     )
 }
 
-/// Linked worktrees of this repository with their checked-out branch and
-/// changed-file count, for the worktree overview. Bounded to the first
+/// Linked worktrees of this repository with their checked-out branch, changed
+/// file count, and ahead/behind plus committed line stats against the branch's
+/// upstream (the at-a-glance race comparison). Bounded to the first
 /// MAX_WORKTREE_OVERVIEW entries to keep the single IPC call cheap.
 pub fn worktree_list_status(
     registry: &WorkspaceRegistry,
@@ -1883,19 +1884,86 @@ pub fn worktree_list_status(
         if main_key.as_deref() == Some(key.as_str()) {
             continue;
         }
-        let dirty = match canonical_dir(registry, &entry.path, workspace) {
-            Ok(resolved) => status_inner(&resolved)
-                .map(|s| s.changed_files.len() as u32)
-                .unwrap_or(0),
-            Err(_) => 0,
+        let (dirty, ahead, behind, upstream) = match canonical_dir(registry, &entry.path, workspace)
+        {
+            Ok(resolved) => match status_inner(&resolved) {
+                Ok(s) => {
+                    let up = s.upstream.map(|u| (u, resolved));
+                    (s.changed_files.len() as u32, s.ahead, s.behind, up)
+                }
+                Err(_) => (0, 0, 0, None),
+            },
+            Err(_) => (0, 0, 0, None),
+        };
+        let (additions, deletions) = match upstream {
+            // Run inside the worktree: `upstream...HEAD` must resolve against
+            // the worktree's own HEAD, not the main repo's.
+            Some((upstream, resolved)) if is_safe_ref(upstream.trim()) => {
+                let dotted = format!("{}...HEAD", upstream.trim());
+                let output = run_git(
+                    &resolved.workspace,
+                    Some(&resolved.git_path),
+                    ["diff", "--shortstat", dotted.as_str()],
+                    DEFAULT_TIMEOUT_SECS,
+                );
+                match output {
+                    Ok(o) if o.exit_code.unwrap_or(-1) == 0 => {
+                        let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                        let (_, ins, del) = parse_shortstat(&text);
+                        (ins, del)
+                    }
+                    _ => (0, 0),
+                }
+            }
+            _ => (0, 0),
         };
         out.push(GitWorktreeStatusEntry {
             worktree_path: key,
             branch: entry.branch,
             dirty,
+            ahead,
+            behind,
+            additions,
+            deletions,
         });
     }
     Ok(out)
+}
+
+/// Rebase a registered linked worktree's branch onto `onto` (typically its
+/// upstream / the repo baseline). Runs with the worktree as cwd so conflicts
+/// land in that worktree; the error text is surfaced to the caller.
+pub fn worktree_rebase(
+    registry: &WorkspaceRegistry,
+    repo_root: &str,
+    path: &str,
+    onto: &str,
+    workspace: &WorkspaceEnv,
+) -> Result<()> {
+    let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
+    ensure_git_available(&repo_root.workspace)?;
+    let target = canonical_dir(registry, path, workspace)?;
+    let target_key = worktree_key_of(&target, workspace);
+    let found = list_worktree_entries(&repo_root)?
+        .into_iter()
+        .filter(|e| !e.bare)
+        .any(|e| worktree_key(&e.path, workspace).as_deref() == Some(target_key.as_str()));
+    if !found {
+        return Err(GitError::InvalidInput(format!(
+            "not a worktree of this repository: {path}"
+        )));
+    }
+    let onto = onto.trim();
+    if !is_safe_ref(onto) {
+        return Err(GitError::InvalidInput(format!("invalid ref: {onto:?}")));
+    }
+    let output = run_git(
+        &target.workspace,
+        Some(&target.git_path),
+        ["rebase", onto],
+        DEFAULT_TIMEOUT_SECS,
+    )?;
+    ensure_success(&output, "git rebase failed")
 }
 
 fn parse_diff_name_status(bytes: &[u8]) -> Vec<GitReviewFile> {

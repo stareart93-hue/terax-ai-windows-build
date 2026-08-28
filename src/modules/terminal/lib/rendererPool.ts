@@ -10,6 +10,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type FontWeight, Terminal } from "@xterm/xterm";
 import { shouldCursorBlink } from "./cursorBlink";
 import { CompositionInputGate } from "./compositionInputGate";
+import { createFileLinkProvider } from "./fileLinkProvider";
 import {
   readTerminalClipboard,
   writeTerminalClipboard,
@@ -28,6 +29,7 @@ export type SlotAdapter = {
   isLeafBlocks(leafId: number): boolean;
   isLeafBusy(leafId: number): boolean;
   isLeafVisible(leafId: number): boolean;
+  leafCwd(leafId: number): string | null;
   storeSnapshot(leafId: number, out: SerializeOutput): void;
 };
 
@@ -242,6 +244,15 @@ function createSlot(): Slot {
     lastH: 0,
     lastUsedAt: 0,
   };
+
+  // Ctrl/Cmd+click on a path-shaped token opens it in the editor, resolved
+  // against the bound leaf's cwd.
+  term.registerLinkProvider(
+    createFileLinkProvider(term, () => {
+      const leafId = slot.currentLeafId;
+      return leafId === null ? null : (adapter?.leafCwd(leafId) ?? null);
+    }),
+  );
 
   term.attachCustomKeyEventHandler((event) => {
     // During IME composition the browser is assembling a multi-keystroke

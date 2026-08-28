@@ -28,3 +28,4 @@ export {
   type PaneNode,
   type SplitDir,
 } from "./lib/panes";
+export { setFileLinkOpener } from "./lib/pathLinks";

@@ -91,6 +91,7 @@ import {
   leafIds,
   navigateFocusedBlocks,
   type PaneBounds,
+  setFileLinkOpener,
   type TerminalPaneHandle,
   useTerminalFileDrop,
   writeToSession,
@@ -1197,6 +1198,16 @@ export default function App() {
     setLspNavigator({ openFile: openContentHit });
     return () => setLspNavigator(null);
   }, [openContentHit]);
+
+  useEffect(() => {
+    setFileLinkOpener((path, line) => {
+      const id = openFileTab(path, true);
+      if (id == null || line == null) return;
+      const h = editorRefs.current.get(id);
+      if (h) h.gotoLine(line);
+      else pendingGotoLine.current.set(id, line);
+    });
+  }, [openFileTab]);
 
   const insertHistoryCommand = useMemo(
     () =>

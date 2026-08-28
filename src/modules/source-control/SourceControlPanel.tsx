@@ -976,6 +976,7 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                 rows={worktreeOverview.rows}
                 loading={worktreeOverview.loading}
                 error={worktreeOverview.error}
+                baseline={review.baseline}
                 getWorktreeAgent={getWorktreeAgent}
                 onOpenTerminal={(path) => onNavigateToPath?.(path)}
                 onLaunchClaude={(request) => onOpenWorktreeSession?.(request)}

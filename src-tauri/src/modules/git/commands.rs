@@ -463,6 +463,21 @@ pub async fn git_worktree_list_status(
 }
 
 #[tauri::command]
+pub async fn git_worktree_rebase(
+    repo_root: String,
+    path: String,
+    onto: String,
+    workspace: Option<WorkspaceEnv>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = WorkspaceEnv::from_option(workspace);
+    blocking(app, move |r| {
+        operations::worktree_rebase(r, &repo_root, &path, &onto, &workspace).map_err(Into::into)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn git_review_status(
     repo_root: String,
     base_ref: String,

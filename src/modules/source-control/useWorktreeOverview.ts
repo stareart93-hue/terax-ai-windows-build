@@ -5,6 +5,8 @@ import {
   type GitWorktreeStatusEntry,
 } from "@/modules/ai/lib/native";
 
+import { useGitSignalRefresh } from "./lib/useGitSignalRefresh";
+
 export type WorktreeOverviewState = {
   rows: GitWorktreeStatusEntry[];
   loading: boolean;
@@ -54,6 +56,7 @@ export function useWorktreeOverview(
   }, [isOpen, enabled, repo, token]);
 
   const refresh = useCallback(() => setToken((t) => t + 1), []);
+  useGitSignalRefresh(isOpen && enabled && !!repo, refresh);
 
   return { rows, loading, error, refresh };
 }

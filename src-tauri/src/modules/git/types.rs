@@ -157,6 +157,10 @@ pub struct GitWorktreeStatusEntry {
     pub worktree_path: String,
     pub branch: Option<String>,
     pub dirty: u32,
+    pub ahead: u32,
+    pub behind: u32,
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Serialize)]

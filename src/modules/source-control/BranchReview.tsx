@@ -197,6 +197,8 @@ export function BranchReview({
   const [prText, setPrText] = useState("");
   const [generating, setGenerating] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -315,6 +317,55 @@ export function BranchReview({
     }
   };
 
+  const openRow = (row: ReviewRow) => {
+    onOpenDiff({
+      path: row.path,
+      repoRoot,
+      mode: "+",
+      originalPath: row.originalPath,
+      baseRef: review.baseline,
+    });
+  };
+
+  const moveFocus = (delta: 1 | -1) => {
+    if (rows.length === 0) return;
+    setFocusedIdx((cur) => {
+      const next =
+        cur === null
+          ? delta > 0
+            ? 0
+            : rows.length - 1
+          : Math.min(rows.length - 1, Math.max(0, cur + delta));
+      const el = listRef.current?.querySelector(`[data-row-idx="${next}"]`);
+      el?.scrollIntoView({ block: "nearest" });
+      return next;
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case "j":
+      case "ArrowDown":
+        e.preventDefault();
+        moveFocus(1);
+        break;
+      case "k":
+      case "ArrowUp":
+        e.preventDefault();
+        moveFocus(-1);
+        break;
+      case "Enter": {
+        if (focusedIdx === null) return;
+        const row = rows[focusedIdx];
+        if (row) {
+          e.preventDefault();
+          openRow(row);
+        }
+        break;
+      }
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/40 px-2.5 py-2">
@@ -359,7 +410,14 @@ export function BranchReview({
         {review.loading ? <Spinner className="size-3 shrink-0" /> : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
+      <div
+        ref={listRef}
+        tabIndex={0}
+        role="listbox"
+        aria-label="Branch review files"
+        onKeyDown={handleKeyDown}
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none focus-visible:ring-1 focus-visible:ring-primary/30 [scrollbar-gutter:stable]"
+      >
         {review.error ? (
           <div className="px-3 py-4 text-[11.5px] leading-snug text-destructive">
             {review.error}
@@ -369,20 +427,19 @@ export function BranchReview({
             No changes vs {review.baseline}.
           </div>
         ) : (
-          rows.map((row) => (
+          rows.map((row, idx) => (
             <button
               key={row.key}
               type="button"
-              onClick={() =>
-                onOpenDiff({
-                  path: row.path,
-                  repoRoot,
-                  mode: "+",
-                  originalPath: row.originalPath,
-                  baseRef: review.baseline,
-                })
-              }
-              className="group flex w-full cursor-pointer items-center gap-2 px-2.5 py-[5px] text-left transition-colors hover:bg-foreground/[0.05]"
+              data-row-idx={idx}
+              role="option"
+              aria-selected={focusedIdx === idx}
+              onMouseEnter={() => setFocusedIdx(idx)}
+              onClick={() => openRow(row)}
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2 px-2.5 py-[5px] text-left transition-colors",
+                focusedIdx === idx ? "bg-foreground/[0.07]" : "hover:bg-foreground/[0.05]",
+              )}
             >
               <span
                 className={cn(

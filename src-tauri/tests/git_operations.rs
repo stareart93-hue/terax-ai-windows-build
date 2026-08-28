@@ -1011,3 +1011,68 @@ fn worktree_list_status_reports_branch_and_dirty_counts() {
     operations::worktree_remove(&fx.registry, &fx.repo_str(), &clean.worktree_path, true, true, &fx.workspace).unwrap();
     operations::worktree_remove(&fx.registry, &fx.repo_str(), &dirty.worktree_path, true, true, &fx.workspace).unwrap();
 }
+
+#[test]
+fn worktree_list_status_reports_upstream_stats_and_rebase() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "one\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    let _origin = fx.setup_origin();
+
+    let wt = operations::worktree_create(&fx.registry, &fx.repo_str(), "race-a", None, &fx.workspace)
+        .expect("create with origin baseline");
+    let wt_local = std::fs::canonicalize(&wt.worktree_path).unwrap();
+    std::fs::write(wt_local.join("b.txt"), "new\n").unwrap();
+    common::git_output(&wt_local, &["add", "b.txt"]);
+    common::git_output(&wt_local, &["commit", "-q", "-m", "feat"]);
+
+    let list = operations::worktree_list_status(&fx.registry, &fx.repo_str(), &fx.workspace)
+        .expect("list status");
+    let entry = list.iter().find(|e| e.branch.as_deref() == Some("race-a")).expect("race-a listed");
+    assert_eq!(entry.ahead, 1, "one commit ahead of origin/main");
+    assert_eq!(entry.behind, 0);
+    assert!(entry.additions >= 1, "committed additions counted");
+
+    // Baseline moves forward on main; the worktree falls behind and the
+    // rebase must land its commit on top.
+    fx.write_file("a.txt", "one\ntwo\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "base moves"]);
+    fx.run_git(&["push", "-q", "origin", "main"]);
+    fx.run_git(&["fetch", "-q", "origin"]);
+    fx.run_git(&["branch", "-f", "origin-main-snapshot", "origin/main"]);
+
+    let list = operations::worktree_list_status(&fx.registry, &fx.repo_str(), &fx.workspace).unwrap();
+    let entry = list.iter().find(|e| e.branch.as_deref() == Some("race-a")).unwrap();
+    assert_eq!(entry.behind, 1, "behind after baseline advances");
+
+    operations::worktree_rebase(&fx.registry, &fx.repo_str(), &wt.worktree_path, "origin/main", &fx.workspace)
+        .expect("rebase onto origin/main");
+    let list = operations::worktree_list_status(&fx.registry, &fx.repo_str(), &fx.workspace).unwrap();
+    let entry = list.iter().find(|e| e.branch.as_deref() == Some("race-a")).unwrap();
+    assert_eq!(entry.behind, 0, "up to date after rebase");
+    assert_eq!(entry.ahead, 1);
+
+    operations::worktree_remove(&fx.registry, &fx.repo_str(), &wt.worktree_path, true, true, &fx.workspace).unwrap();
+}
+
+#[test]
+fn worktree_rebase_rejects_unregistered_paths() {
+    if skip_if_no_git() {
+        return;
+    }
+    let fx = GitRepoFixture::new();
+    fx.write_file("a.txt", "a\n");
+    fx.run_git(&["add", "a.txt"]);
+    fx.run_git(&["commit", "-q", "-m", "seed"]);
+    let stranger = fx.repo_path.join("not-a-worktree");
+    std::fs::create_dir_all(&stranger).unwrap();
+    match operations::worktree_rebase(&fx.registry, &fx.repo_str(), &to_canon(&stranger), "main", &fx.workspace) {
+        Err(GitError::InvalidInput(_)) => {}
+        other => panic!("expected InvalidInput, got {other:?}"),
+    }
+}
